@@ -7,6 +7,35 @@ var Debug = _interopDefault(require('debug'));
 var EventEmitter = _interopDefault(require('events'));
 var hat = _interopDefault(require('hat'));
 
+/**
+ * create a new done handler
+ * @private
+ * @param callback
+ * @param resolve
+ * @param reject
+ * @returns {done}
+ */
+function doneFactory(callback, resolve, reject) {
+  callback = _.isFunction(callback) ? callback : function () {
+    return false;
+  };
+  resolve = _.isFunction(resolve) ? resolve : function () {
+    return false;
+  };
+  reject = _.isFunction(reject) ? reject : function () {
+    return false;
+  };
+
+  return function done(error, success) {
+    if (error) {
+      callback(error);
+      return reject(success);
+    }
+    callback(null, success);
+    return resolve(success);
+  };
+}
+
 // leader record schema properties
 var VALUE = 'value';
 var TIMESTAMP = 'timestamp';
@@ -99,143 +128,19 @@ var possibleConstructorReturn = function (self, call) {
   return call && (typeof call === "object" || typeof call === "function") ? call : self;
 };
 
-var debug = Debug('feed:rethinkdb');
-var DEFAULT_DB = 'test';
-var ID = 'id';
-var DEFAULT_APPEND_INTERVAL = 1000;
+var debug$1 = Debug('feed:rethinkdb');
 
-/**
- * create a new done handler
- * @private
- * @param callback
- * @param resolve
- * @param reject
- * @returns {done}
- */
-function doneFactory(callback, resolve, reject) {
-  callback = _.isFunction(callback) ? callback : function () {
-    return false;
-  };
-  resolve = _.isFunction(resolve) ? resolve : function () {
-    return false;
-  };
-  reject = _.isFunction(reject) ? reject : function () {
-    return false;
-  };
+var LeaderFeed = function (_EventEmitter) {
+  inherits(LeaderFeed, _EventEmitter);
 
-  return function done(error, success) {
-    if (error) {
-      callback(error);
-      return reject(success);
-    }
-    callback(null, success);
-    return resolve(success);
-  };
-}
+  function LeaderFeed(options, DEFAULT_HEARTBEAT_INTERVAL) {
+    classCallCheck(this, LeaderFeed);
 
-/**
- * Sets up subscription
- * @private
- * @param self
- * @param done
- */
-function subscribe(main, done) {
-  var r = main.r,
-      connection = main.connection,
-      table = main.table,
-      db = main.db;
+    var _this = possibleConstructorReturn(this, (LeaderFeed.__proto__ || Object.getPrototypeOf(LeaderFeed)).call(this));
 
-
-  return r.db(db).table(table).changes().run(connection).then(function (cursor) {
-    debug('changefeed started');
-
-    cursor.each(function (error, change) {
-      if (error) {
-        debug('changefeed error: %O', error);
-        return main.changeState(FOLLOWER);
-      }
-
-      var data = _.get(change, 'new_val');
-      var id = _.get(data, ID);
-      var value = _.get(data, VALUE);
-
-      switch (id) {
-        case LEADER:
-          if (value !== main.id) debug('heartbeat from %s', value);
-
-          // check if a new leader has been elected
-          if (main.leader && main.leader !== value) main.emit(NEW_LEADER, value);
-          main.leader = value;
-
-          // if leader, do not time out self, otherwise restart the timeout
-          main.leader === main.id ? main._clearElectionTimeout() : main._restartElectionTimeout();
-
-          return main.state === LEADER && value !== main.id ? main.changeState(FOLLOWER) : Promise.resolve();
-
-        default:
-          main.emit(CHANGE, change);
-          break;
-      }
-    });
-    done(null, main);
-
-    // after the cursor is obtained, change state to follower
-    return main.changeState(FOLLOWER);
-  }, done);
-}
-
-/**
- * add heartbeats to the table
- * @private
- * @param main
- * @returns {Promise.<TResult>}
- */
-function heartbeat(main) {
-  var _table$insert;
-
-  debug('heartbeat update');
-  var r = main.r;
-  var table = r.db(main.db).table(main.table);
-
-  // insert a heartbeat
-  return table.insert((_table$insert = {}, defineProperty(_table$insert, ID, LEADER), defineProperty(_table$insert, VALUE, main.id), defineProperty(_table$insert, TIMESTAMP, main.r.now()), _table$insert), {
-    durability: 'hard',
-    conflict: 'update'
-  }).do(function (summary) {
-    return summary('errors').ne(0).branch(r.error(summary('first_error')), true);
-  }).run(main.connection).then(function (summary) {
-    return summary;
-  }, function (error) {
-    debug('heartbeat update error: %O', error);
-    return main.changeState(FOLLOWER);
-  });
-}
-
-var RethinkLeaderFeed = function (_EventEmitter) {
-  inherits(RethinkLeaderFeed, _EventEmitter);
-
-  /**
-   * initializes the leaderfeed
-   * @param driver
-   * @param db
-   * @param options
-   */
-  function RethinkLeaderFeed(driver, db, options) {
-    classCallCheck(this, RethinkLeaderFeed);
-
-    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this));
-
-    debug('initializing leader feed');
-
-    if (!driver) throw new Error('no driver specified');
-    if (_.isObject(db)) {
-      options = db;
-      db = DEFAULT_DB;
-    }
     _this.id = hat();
-    _this.db = db || DEFAULT_DB;
     _this.state = null;
-    _this._driver = driver;
+
     _this._options = options || {};
     _this._electionTimeout = null;
     _this._heartbeatInterval = null;
@@ -253,10 +158,174 @@ var RethinkLeaderFeed = function (_EventEmitter) {
     var max = _.isNumber(electionTimeoutMaxMs) ? Math.floor(electionTimeoutMaxMs) : null;
 
     // calculate timeout thresholds
-    _this._heartbeatIntervalMs = _.isNumber(heartbeatIntervalMs) ? Math.floor(heartbeatIntervalMs) : DEFAULT_APPEND_INTERVAL;
+    _this._heartbeatIntervalMs = _.isNumber(heartbeatIntervalMs) ? Math.floor(heartbeatIntervalMs) : DEFAULT_HEARTBEAT_INTERVAL;
 
     _this._electionTimeoutMinMs = min && min >= _this._heartbeatIntervalMs * 2 ? min : _this._heartbeatIntervalMs * 2;
     _this._electionTimeoutMaxMs = max && max >= _this._electionTimeoutMinMs * 2 ? max : _this._electionTimeoutMinMs * 2;
+    return _this;
+  }
+
+  /**
+   * change the state of the current leaderfeed
+   * @param state
+   * @returns {Promise}
+   */
+
+
+  createClass(LeaderFeed, [{
+    key: '_changeState',
+    value: function _changeState(state) {
+      var _this2 = this;
+
+      if (state === this.state) return false;
+      debug$1('changed state %s', state);
+      this.emit(NEW_STATE, state);
+
+      switch (state) {
+        case LEADER:
+          this.state = LEADER;
+          this._clearElectionTimeout();
+
+          // send the first heartbeat and start the heartbeat interval
+          return this._heartbeat().then(function () {
+            _this2._restartHeartbeatInterval();
+          });
+
+        case FOLLOWER:
+          this.state = FOLLOWER;
+          this._restartElectionTimeout();
+          return Promise.resolve();
+      }
+    }
+
+    /**
+     * clear the heartbeat interval
+     * @private
+     */
+
+  }, {
+    key: '_clearHeartbeatInterval',
+    value: function _clearHeartbeatInterval() {
+      if (this._heartbeatInterval) clearInterval(this._heartbeatInterval);
+      this._heartbeatInterval = null;
+    }
+
+    /**
+     * clear heartbeat interval and restart
+     * @private
+     */
+
+  }, {
+    key: '_restartHeartbeatInterval',
+    value: function _restartHeartbeatInterval() {
+      var _this3 = this;
+
+      this._clearHeartbeatInterval();
+      this._heartbeatInterval = setInterval(function () {
+        return _this3._heartbeat();
+      }, this._heartbeatIntervalMs);
+    }
+
+    /**
+     * clear election timeout
+     * @private
+     */
+
+  }, {
+    key: '_clearElectionTimeout',
+    value: function _clearElectionTimeout() {
+      if (this._electionTimeout) clearTimeout(this._electionTimeout);
+      this._electionTimeout = null;
+    }
+
+    /**
+     * clear election timeout and restart
+     * @private
+     */
+
+  }, {
+    key: '_restartElectionTimeout',
+    value: function _restartElectionTimeout() {
+      var _this4 = this;
+
+      this._clearElectionTimeout();
+      this._electionTimeout = setTimeout(function () {
+        return _this4._changeState(LEADER);
+      }, this.randomElectionTimeout);
+    }
+
+    /**
+     * retrns truthy if leaderfeed is the leader
+     * @returns {boolean}
+     */
+
+  }, {
+    key: '_heartbeat',
+
+
+    /*
+     * Methods that should be overridden
+     */
+    value: function _heartbeat() {
+      return Promise.resolve();
+    }
+  }, {
+    key: '_subscribe',
+    value: function _subscribe() {
+      return Promise.resolve();
+    }
+  }, {
+    key: 'isLeader',
+    get: function get$$1() {
+      return this.state === LEADER || this.leader === this.id;
+    }
+
+    /**
+     * generates a random number within the election timeout threshold
+     * @returns {number}
+     */
+
+  }, {
+    key: 'randomElectionTimeout',
+    get: function get$$1() {
+      return Math.floor(Math.random() * (this._electionTimeoutMaxMs - this._electionTimeoutMinMs + 1) + this._electionTimeoutMinMs);
+    }
+  }]);
+  return LeaderFeed;
+}(EventEmitter);
+
+var debug = Debug('feed:rethinkdb');
+var DEFAULT_DB = 'test';
+var ID = 'id';
+var DEFAULT_HEARTBEAT_INTERVAL = 1000;
+
+var RethinkLeaderFeed = function (_LeaderFeed) {
+  inherits(RethinkLeaderFeed, _LeaderFeed);
+
+  /**
+   * initializes the leaderfeed
+   * @param driver
+   * @param db
+   * @param options
+   */
+  function RethinkLeaderFeed(driver, db, options) {
+    classCallCheck(this, RethinkLeaderFeed);
+
+    debug('initializing leader feed');
+
+    if (!driver) throw new Error('no driver specified');
+    if (_.isObject(db)) {
+      options = db;
+      db = DEFAULT_DB;
+    }
+
+    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL));
+
+    _this.r = null;
+    _this.db = db || DEFAULT_DB;
+    _this.table = null;
+    _this.collection = null;
+    _this._driver = driver;
     return _this;
   }
 
@@ -298,18 +367,18 @@ var RethinkLeaderFeed = function (_EventEmitter) {
           if (!_.isFunction(_this2._driver.connect) || _.has(_this2._driver, '_poolMaster')) {
             _this2.connection = null;
             _this2.r = !_.has(_this2._driver, '_poolMaster') ? _this2._driver(_this2._options) : _this2._driver;
-            return subscribe(_this2, done);
+            return _this2._subscribe(done);
           } else {
             if (connection) {
               _this2.connection = connection;
               _this2.r = _this2._driver;
-              return subscribe(_this2, done);
+              return _this2._subscribe(done);
             } else {
               return _this2._driver.connect(_this2.options, function (error, conn) {
                 if (error) return done(error);
                 _this2.connection = conn;
                 _this2.r = _this2._driver;
-                return subscribe(_this2, done);
+                return _this2._subscribe(done);
               });
             }
           }
@@ -321,117 +390,95 @@ var RethinkLeaderFeed = function (_EventEmitter) {
     }
 
     /**
-     * change the state of the current leaderfeed
-     * @param state
-     * @returns {Promise}
-     */
-
-  }, {
-    key: 'changeState',
-    value: function changeState(state) {
-      var _this3 = this;
-
-      if (state === this.state) return false;
-      debug('changed state %s', state);
-      this.emit(NEW_STATE, state);
-
-      switch (state) {
-        case LEADER:
-          this.state = LEADER;
-          this._clearElectionTimeout();
-
-          // send the first heartbeat and start the heartbeat interval
-          return heartbeat(this).then(function () {
-            _this3._restartHeartbeatInterval();
-          });
-
-        case FOLLOWER:
-          this.state = FOLLOWER;
-          this._restartElectionTimeout();
-          return Promise.resolve();
-      }
-    }
-
-    /**
-     * clear the heartbeat interval
+     * sends a heartbeat
+     * @returns {Promise.<TResult>}
      * @private
      */
 
   }, {
-    key: '_clearHeartbeatInterval',
-    value: function _clearHeartbeatInterval() {
-      if (this._heartbeatInterval) clearInterval(this._heartbeatInterval);
-      this._heartbeatInterval = null;
+    key: '_heartbeat',
+    value: function _heartbeat() {
+      var _table$insert,
+          _this3 = this;
+
+      debug('heartbeat update');
+      var r = this.r;
+      var table = this.collection;
+
+      // insert a heartbeat
+      return table.insert((_table$insert = {}, defineProperty(_table$insert, ID, LEADER), defineProperty(_table$insert, VALUE, this.id), defineProperty(_table$insert, TIMESTAMP, r.now()), _table$insert), {
+        durability: 'hard',
+        conflict: 'update'
+      }).do(function (summary) {
+        return summary('errors').ne(0).branch(r.error(summary('first_error')), true);
+      }).run(this.connection).then(function (summary) {
+        return summary;
+      }, function (error) {
+        debug('heartbeat update error: %O', error);
+        return _this3._changeState(FOLLOWER);
+      });
     }
 
     /**
-     * clear heartbeat interval and restart
+     * Sets up subscription
      * @private
+     * @param self
+     * @param done
      */
 
   }, {
-    key: '_restartHeartbeatInterval',
-    value: function _restartHeartbeatInterval() {
+    key: '_subscribe',
+    value: function _subscribe(done) {
       var _this4 = this;
 
-      this._clearHeartbeatInterval();
-      this._heartbeatInterval = setInterval(function () {
-        return heartbeat(_this4);
-      }, this._heartbeatIntervalMs);
-    }
+      var r = this.r,
+          connection = this.connection,
+          table = this.table,
+          db = this.db;
 
-    /**
-     * clear election timeout
-     * @private
-     */
 
-  }, {
-    key: '_clearElectionTimeout',
-    value: function _clearElectionTimeout() {
-      if (this._electionTimeout) clearTimeout(this._electionTimeout);
-      this._electionTimeout = null;
-    }
+      this.collection = r.db(db).table(table);
 
-    /**
-     * clear election timeout and restart
-     * @private
-     */
+      return r.db(db).table(table).changes().run(connection).then(function (cursor) {
+        debug('changefeed started');
 
-  }, {
-    key: '_restartElectionTimeout',
-    value: function _restartElectionTimeout() {
-      var _this5 = this;
+        cursor.each(function (error, change) {
+          if (error) {
+            debug('changefeed error: %O', error);
+            return _this4._changeState(FOLLOWER);
+          }
 
-      this._clearElectionTimeout();
-      this._electionTimeout = setTimeout(function () {
-        return _this5.changeState(LEADER);
-      }, this.randomElectionTimeout);
-    }
+          var data = _.get(change, 'new_val');
+          var id = _.get(data, ID);
+          var value = _.get(data, VALUE);
 
-    /**
-     * retrns truthy if leaderfeed is the leader
-     * @returns {boolean}
-     */
+          switch (id) {
+            case LEADER:
+              if (value !== _this4.id) debug('heartbeat from %s', value);
 
-  }, {
-    key: 'isLeader',
-    get: function get$$1() {
-      return this.state === LEADER || this.leader === this.id;
-    }
+              // check if a new leader has been elected
+              if (_this4.leader && _this4.leader !== value) _this4.emit(NEW_LEADER, value);
+              _this4.leader = value;
 
-    /**
-     * generates a random number within the election timeout threshold
-     * @returns {number}
-     */
+              // if leader, do not time out self, otherwise restart the timeout
+              _this4.leader === _this4.id ? _this4._clearElectionTimeout() : _this4._restartElectionTimeout();
 
-  }, {
-    key: 'randomElectionTimeout',
-    get: function get$$1() {
-      return Math.floor(Math.random() * (this._electionTimeoutMaxMs - this._electionTimeoutMinMs + 1) + this._electionTimeoutMinMs);
+              return _this4.state === LEADER && value !== _this4.id ? _this4._changeState(FOLLOWER) : Promise.resolve();
+
+            default:
+              _this4.emit(CHANGE, change);
+              break;
+          }
+        });
+        done(null, _this4);
+
+        // after the cursor is obtained, change state to follower
+        return _this4._changeState(FOLLOWER);
+      }, done);
     }
   }]);
   return RethinkLeaderFeed;
-}(EventEmitter);
+}(LeaderFeed);
 
 var index = {
   RethinkDB: RethinkLeaderFeed
