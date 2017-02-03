@@ -1,14 +1,13 @@
 import _ from 'lodash'
 import Debug from 'debug'
-import doneFactory from '../common/doneFactory'
 
 import {
   FOLLOWER,
   LEADER,
   VALUE,
   TIMESTAMP,
-  NEW_LEADER,
-  CHANGE
+  CHANGE,
+  HEARTBEAT
 } from '../common/constants'
 
 import LeaderFeed from '../LeaderFeed'
@@ -44,72 +43,58 @@ export default class RethinkLeaderFeed extends LeaderFeed {
   }
 
   /**
-   * establishes a connection and starts the heartbeat
-   * @param table
-   * @param connection
-   * @param callback
-   * @returns {Promise}
+   * establishes a connection
+   * @param options
+   * @param done
+   * @returns {*}
+   * @private
    */
-  start (table, connection, callback) {
-    if (_.isFunction(connection)) {
-      callback = connection
-      connection = null
-    }
-    callback = _.isFunction(callback) ? callback : () => false
+  _start (options, done) {
+    try {
+      let { table, connection } = options
 
-    debug('starting feed')
+      if (!_.isString(table)) return done(new Error('missing table argument'))
+      this.table = table
 
-    // return a promise for flexibility
-    return new Promise ((resolve, reject) => {
+      // intelligently connect to the rethinkdb database
+      if (!_.isFunction(this._driver.connect) || _.has(this._driver, '_poolMaster')) {
+        this.connection = null
+        this.r = !_.has(this._driver, '_poolMaster')
+          ? this._driver(this._options)
+          : this._driver
+        return done()
 
-      // create a done handler that will handle callbacks and promises
-      let done = doneFactory(callback, resolve, reject)
-
-      try {
-        if (!_.isString(table)) return done(new Error('missing table argument'))
-        this.table = table
-
-        // intelligently connect to the rethinkdb database
-        if (!_.isFunction(this._driver.connect) || _.has(this._driver, '_poolMaster')) {
-          this.connection = null
-          this.r = !_.has(this._driver, '_poolMaster')
-            ? this._driver(this._options)
-            : this._driver
-          return this._subscribe(done)
-
+      } else {
+        if (connection) {
+          this.connection = connection
+          this.r = this._driver
+          return done()
         } else {
-          if (connection) {
-            this.connection = connection
+          return this._driver.connect(this.options, (error, conn) => {
+            if (error) return done(error)
+            this.connection = conn
             this.r = this._driver
-            return this._subscribe(done)
-          } else {
-            return this._driver.connect(this.options, (error, conn) => {
-              if (error) return done(error)
-              this.connection = conn
-              this.r = this._driver
-              return this._subscribe(done)
-            })
-          }
+            return done()
+          })
         }
-      } catch (error) {
-        callback(error)
-        return reject(error)
       }
-    })
+    } catch (error) {
+      return done(error)
+    }
   }
 
   /**
    * sends a heartbeat
-   * @returns {Promise.<TResult>}
+   * @param done
    * @private
    */
-  _heartbeat () {
+  _heartbeat (done) {
     debug('heartbeat update')
     let r = this.r
     let table = this.collection
 
     // insert a heartbeat
-    return table.insert({
+    table.insert({
       [ID]: LEADER,
       [VALUE]: this.id,
       [TIMESTAMP]: r.now()
@@ -124,19 +109,19 @@ export default class RethinkLeaderFeed extends LeaderFeed {
         )
       })
       .run(this.connection)
-      .then(summary => {
-        return summary
+      .then(() => {
+        return done()
       }, error => {
-        debug('heartbeat update error: %O', error)
+        done(error)
         return this._changeState(FOLLOWER)
       })
   }
 
   /**
-   * Sets up subscription
-   * @private
-   * @param self
+   * sets up a subscription
    * @param done
+   * @returns {Promise.<TResult>}
+   * @private
    */
   _subscribe (done) {
     let { r, connection, table, db } = this
@@ -150,6 +135,9 @@ export default class RethinkLeaderFeed extends LeaderFeed {
       .then((cursor) => {
         debug('changefeed started')
 
+        // after the cursor is obtained, change state to follower
+        this._changeState(FOLLOWER)
+
         cursor.each((error, change) => {
           if (error) {
             debug('changefeed error: %O', error)
@@ -160,32 +148,12 @@ export default class RethinkLeaderFeed extends LeaderFeed {
           let id = _.get(data, ID)
           let value = _.get(data, VALUE)
 
-          switch (id) {
-            case LEADER:
-              if (value !== this.id) debug('heartbeat from %s', value)
-
-              // check if a new leader has been elected
-              if (this.leader && this.leader !== value) this.emit(NEW_LEADER, value)
-              this.leader = value
-
-              // if leader, do not time out self, otherwise restart the timeout
-              this.leader === this.id
-                ? this._clearElectionTimeout()
-                : this._restartElectionTimeout()
-
-              return (this.state === LEADER && value !== this.id)
-                ? this._changeState(FOLLOWER)
-                : Promise.resolve()
-
-            default:
-              this.emit(CHANGE, change)
-              break
-          }
+          // emit the appropriate event
+          return id === LEADER
+            ? this.emit(HEARTBEAT, value)
+            : this.emit(CHANGE, change)
         })
         done(null, this)
-
-        // after the cursor is obtained, change state to follower
-        return this._changeState(FOLLOWER)
       }, done)
   }
 }

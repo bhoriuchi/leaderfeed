@@ -1,8 +1,9 @@
 import _ from 'lodash'
 import Debug from 'debug'
+import doneFactory from './common/doneFactory'
 import EventEmitter from 'events'
 import hat from 'hat'
-import { FOLLOWER, LEADER, NEW_STATE } from './common/constants'
+import { FOLLOWER, LEADER, HEARTBEAT, NEW_STATE, NEW_LEADER } from './common/constants'
 
 const debug = Debug('feed:rethinkdb')
 
@@ -39,6 +40,53 @@ export default class LeaderFeed extends EventEmitter {
   }
 
   /**
+   * starts the leaderfeed and subscription
+   * @param options
+   * @param callback
+   * @returns {Promise}
+   */
+  start (options, callback = () => false) {
+    if (!_.isObject(options) || _.isEmpty(options)) throw new Error('invalid options')
+    if (!_.isFunction(callback)) throw new Error('invalid callback')
+
+    return new Promise((resolve, reject) => {
+      let done = doneFactory(
+        error => error ? callback(error) : callback(null, this),
+        () => resolve(this),
+        reject
+      )
+
+      // start the heartbeat listener
+      this.on(HEARTBEAT, (leader) => {
+        if (leader !== this.id) debug('heartbeat from %s', value)
+
+        // check if a new leader has been elected
+        if (this.leader && this.leader !== leader) this.emit(NEW_LEADER, leader)
+        this.leader = leader
+
+        // if leader, do not time out self, otherwise restart the timeout
+        this.leader === this.id
+          ? this._clearElectionTimeout()
+          : this._restartElectionTimeout()
+
+        // if the the node thinks it is the leader but the heartbeat
+        // says otherwise, change to follower
+        if (this.state === LEADER && leader !== this.id) return this._changeState(FOLLOWER)
+      })
+
+      return this._start(options, (error) => {
+        if (error) {
+          debug('error during start %O', error)
+          return done(error)
+        }
+
+        debug('starting feed')
+        return this._subscribe(done)
+      })
+    })
+  }
+
+  /**
    * change the state of the current leaderfeed
    * @param state
    * @returns {Promise}
@@ -54,7 +102,13 @@ export default class LeaderFeed extends EventEmitter {
         this._clearElectionTimeout()
 
         // send the first heartbeat and start the heartbeat interval
-        return this._heartbeat().then(() => {
+        return this._heartbeat((error) => {
+          if (error) {
+            // if unable to set the heartbeat, cleat the interval and become follower
+            debug('error sending heartbeat %O', error)
+            this._clearHeartbeatInterval()
+            return this._changeState(FOLLOWER)
+          }
           this._restartHeartbeatInterval()
         })
 
@@ -81,7 +135,10 @@ export default class LeaderFeed extends EventEmitter {
   _restartHeartbeatInterval () {
     this._clearHeartbeatInterval()
     this._heartbeatInterval = setInterval(() => {
-      return this._heartbeat()
+      return this._heartbeat((error) => {
+        // if there was an error updating the heartbeat, cancel the interval
+        if (error) this._clearHeartbeatInterval()
+      })
     }, this._heartbeatIntervalMs)
   }
 
@@ -123,14 +180,47 @@ export default class LeaderFeed extends EventEmitter {
     )
   }
 
-  /*
+  /************************************************
    * Methods that should be overridden
+   ************************************************/
+
+  /**
+   * should update the leader/heartbeat metadata with a timestamp
+   * and callback with error as first argument or no arguments if successful
+   * @param done
+   * @returns {*}
+   * @private
    */
-  _heartbeat () {
-    return Promise.resolve()
+  _heartbeat (done) {
+    return done()
   }
 
-  _subscribe () {
-    return Promise.resolve()
+  /**
+   * should create a change feed that emits the following events
+   *
+   * Event:heartbeat => leader
+   * Event:change => { new_val, old_val }
+   *
+   * and then call done with error as the first argument or no arguments if successful
+   *
+   * @param done
+   * @returns {*}
+   * @private
+   */
+  _subscribe (done) {
+    return done()
+  }
+
+  /**
+   * sould take a hash of options and perform any initializations
+   * or database connection steps then call done as an error as the first
+   * argument or no arguments if successful
+   * @param options
+   * @param done
+   * @returns {*}
+   * @private
+   */
+  _start (options, done) {
+    return done()
   }
 }

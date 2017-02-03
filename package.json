@@ -6,7 +6,7 @@
   "scripts": {
     "build:copybrc": "cp build/.build.babelrc src/.babelrc",
     "build:rmbrc": "rm -f src/.babelrc",
-    "build": "cp build/.build.babelrc src/.babelrc && rollup -c build/rollup.config.js && rm -f src/.babelrc",
+    "build": "cp build/.build.babelrc src/.babelrc && rollup -c build/rollup.config.js && rollup -c build/rollup.leaderfeed.js && rm -f src/.babelrc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

@@ -7,31 +7,6 @@ var Debug = _interopDefault(require('debug'));
 var EventEmitter = _interopDefault(require('events'));
 var hat = _interopDefault(require('hat'));
 
-// leader record schema properties
-var VALUE = 'value';
-var TIMESTAMP = 'timestamp';
-
-// raft states
-var LEADER = 'leader';
-var FOLLOWER = 'follower';
-
-// events
-var HEARTBEAT = 'heartbeat';
-var CHANGE = 'change';
-var NEW_STATE = 'new state';
-var NEW_LEADER = 'new leader';
-
-var CONST = {
-  VALUE: VALUE,
-  TIMESTAMP: TIMESTAMP,
-  LEADER: LEADER,
-  FOLLOWER: FOLLOWER,
-  HEARTBEAT: HEARTBEAT,
-  CHANGE: CHANGE,
-  NEW_LEADER: NEW_LEADER,
-  NEW_STATE: NEW_STATE
-};
-
 /**
  * create a new done handler
  * @private
@@ -61,6 +36,20 @@ function doneFactory(callback, resolve, reject) {
   };
 }
 
+// leader record schema properties
+
+
+
+// raft states
+var LEADER = 'leader';
+var FOLLOWER = 'follower';
+
+// events
+var HEARTBEAT = 'heartbeat';
+
+var NEW_STATE = 'new state';
+var NEW_LEADER = 'new leader';
+
 var classCallCheck = function (instance, Constructor) {
   if (!(instance instanceof Constructor)) {
     throw new TypeError("Cannot call a class as a function");
@@ -89,20 +78,7 @@ var createClass = function () {
 
 
 
-var defineProperty = function (obj, key, value) {
-  if (key in obj) {
-    Object.defineProperty(obj, key, {
-      value: value,
-      enumerable: true,
-      configurable: true,
-      writable: true
-    });
-  } else {
-    obj[key] = value;
-  }
 
-  return obj;
-};
 
 
 
@@ -140,7 +116,7 @@ var possibleConstructorReturn = function (self, call) {
   return call && (typeof call === "object" || typeof call === "function") ? call : self;
 };
 
-var debug$1 = Debug('feed:rethinkdb');
+var debug = Debug('feed:rethinkdb');
 
 var LeaderFeed = function (_EventEmitter) {
   inherits(LeaderFeed, _EventEmitter);
@@ -206,7 +182,7 @@ var LeaderFeed = function (_EventEmitter) {
 
         // start the heartbeat listener
         _this2.on(HEARTBEAT, function (leader) {
-          if (leader !== _this2.id) debug$1('heartbeat from %s', value);
+          if (leader !== _this2.id) debug('heartbeat from %s', value);
 
           // check if a new leader has been elected
           if (_this2.leader && _this2.leader !== leader) _this2.emit(NEW_LEADER, leader);
@@ -222,11 +198,11 @@ var LeaderFeed = function (_EventEmitter) {
 
         return _this2._start(options, function (error) {
           if (error) {
-            debug$1('error during start %O', error);
+            debug('error during start %O', error);
             return done(error);
           }
 
-          debug$1('starting feed');
+          debug('starting feed');
           return _this2._subscribe(done);
         });
       });
@@ -244,7 +220,7 @@ var LeaderFeed = function (_EventEmitter) {
       var _this3 = this;
 
       if (state === this.state) return false;
-      debug$1('changed state %s', state);
+      debug('changed state %s', state);
       this.emit(NEW_STATE, state);
 
       switch (state) {
@@ -256,7 +232,7 @@ var LeaderFeed = function (_EventEmitter) {
           return this._heartbeat(function (error) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
-              debug$1('error sending heartbeat %O', error);
+              debug('error sending heartbeat %O', error);
               _this3._clearHeartbeatInterval();
               return _this3._changeState(FOLLOWER);
             }
@@ -407,166 +383,4 @@ var LeaderFeed = function (_EventEmitter) {
   return LeaderFeed;
 }(EventEmitter);
 
-var debug = Debug('feed:rethinkdb');
-var DEFAULT_DB = 'test';
-var ID = 'id';
-var DEFAULT_HEARTBEAT_INTERVAL = 1000;
-
-var RethinkLeaderFeed = function (_LeaderFeed) {
-  inherits(RethinkLeaderFeed, _LeaderFeed);
-
-  /**
-   * initializes the leaderfeed
-   * @param driver
-   * @param db
-   * @param options
-   */
-  function RethinkLeaderFeed(driver, db, options) {
-    classCallCheck(this, RethinkLeaderFeed);
-
-    debug('initializing leader feed');
-
-    if (!driver) throw new Error('no driver specified');
-    if (_.isObject(db)) {
-      options = db;
-      db = DEFAULT_DB;
-    }
-
-    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL));
-
-    _this.r = null;
-    _this.db = db || DEFAULT_DB;
-    _this.table = null;
-    _this.collection = null;
-    _this._driver = driver;
-    return _this;
-  }
-
-  /**
-   * establishes a connection
-   * @param options
-   * @param done
-   * @returns {*}
-   * @private
-   */
-
-
-  createClass(RethinkLeaderFeed, [{
-    key: '_start',
-    value: function _start(options, done) {
-      var _this2 = this;
-
-      try {
-        var table = options.table,
-            connection = options.connection;
-
-
-        if (!_.isString(table)) return done(new Error('missing table argument'));
-        this.table = table;
-
-        // intelligently connect to the rethinkdb database
-        if (!_.isFunction(this._driver.connect) || _.has(this._driver, '_poolMaster')) {
-          this.connection = null;
-          this.r = !_.has(this._driver, '_poolMaster') ? this._driver(this._options) : this._driver;
-          return done();
-        } else {
-          if (connection) {
-            this.connection = connection;
-            this.r = this._driver;
-            return done();
-          } else {
-            return this._driver.connect(this.options, function (error, conn) {
-              if (error) return done(error);
-              _this2.connection = conn;
-              _this2.r = _this2._driver;
-              return done();
-            });
-          }
-        }
-      } catch (error) {
-        return done(error);
-      }
-    }
-
-    /**
-     * sends a heartbeat
-     * @param done
-     * @private
-     */
-
-  }, {
-    key: '_heartbeat',
-    value: function _heartbeat(done) {
-      var _table$insert,
-          _this3 = this;
-
-      debug('heartbeat update');
-      var r = this.r;
-      var table = this.collection;
-
-      // insert a heartbeat
-      table.insert((_table$insert = {}, defineProperty(_table$insert, ID, LEADER), defineProperty(_table$insert, VALUE, this.id), defineProperty(_table$insert, TIMESTAMP, r.now()), _table$insert), {
-        durability: 'hard',
-        conflict: 'update'
-      }).do(function (summary) {
-        return summary('errors').ne(0).branch(r.error(summary('first_error')), true);
-      }).run(this.connection).then(function () {
-        return done();
-      }, function (error) {
-        done(error);
-        return _this3._changeState(FOLLOWER);
-      });
-    }
-
-    /**
-     * sets up a subscription
-     * @param done
-     * @returns {Promise.<TResult>}
-     * @private
-     */
-
-  }, {
-    key: '_subscribe',
-    value: function _subscribe(done) {
-      var _this4 = this;
-
-      var r = this.r,
-          connection = this.connection,
-          table = this.table,
-          db = this.db;
-
-
-      this.collection = r.db(db).table(table);
-
-      return r.db(db).table(table).changes().run(connection).then(function (cursor) {
-        debug('changefeed started');
-
-        // after the cursor is obtained, change state to follower
-        _this4._changeState(FOLLOWER);
-
-        cursor.each(function (error, change) {
-          if (error) {
-            debug('changefeed error: %O', error);
-            return _this4._changeState(FOLLOWER);
-          }
-
-          var data = _.get(change, 'new_val');
-          var id = _.get(data, ID);
-          var value = _.get(data, VALUE);
-
-          // emit the appropriate event
-          return id === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, change);
-        });
-        done(null, _this4);
-      }, done);
-    }
-  }]);
-  return RethinkLeaderFeed;
-}(LeaderFeed);
-
-var index = {
-  CONST: CONST,
-  RethinkDB: RethinkLeaderFeed
-};
-
-module.exports = index;
+module.exports = LeaderFeed;
