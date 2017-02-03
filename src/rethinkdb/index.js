@@ -7,7 +7,8 @@ import {
   VALUE,
   TIMESTAMP,
   CHANGE,
-  HEARTBEAT
+  HEARTBEAT,
+  SUB_ERROR
 } from '../common/constants'
 
 import LeaderFeed from '../LeaderFeed'
@@ -25,8 +26,6 @@ export default class RethinkLeaderFeed extends LeaderFeed {
    * @param options
    */
   constructor (driver, db, options) {
-    debug('initializing leader feed')
-
     if (!driver) throw new Error('no driver specified')
     if (_.isObject(db)) {
       options = db
@@ -84,6 +83,35 @@ export default class RethinkLeaderFeed extends LeaderFeed {
   }
 
   /**
+   * create the db and table if they do not exist
+   * @param done
+   * @private
+   */
+  _create (done) {
+    let r = this.r
+
+    // create the db and table if they do not exist
+    return r.dbList()
+      .contains(this.db)
+      .branch(
+        r.db(this.db)
+          .tableList()
+          .contains(this.table)
+          .branch(
+            true,
+            r.db(this.db).tableCreate(this.table, { primaryKey: ID })
+          ),
+        r.dbCreate(this.db)
+          .do(() => r.db(this.db).tableCreate(this.table, { primaryKey: ID }))
+      )
+      .run(this.connection)
+      .then(() => {
+        this.collection = r.db(this.db).table(this.table)
+        return done()
+      }, done)
+  }
+
+  /**
    * sends a heartbeat
    * @param done
    * @private
@@ -126,8 +154,6 @@ export default class RethinkLeaderFeed extends LeaderFeed {
   _subscribe (done) {
     let { r, connection, table, db } = this
 
-    this.collection = r.db(db).table(table)
-
     return r.db(db)
       .table(table)
       .changes()
@@ -135,13 +161,10 @@ export default class RethinkLeaderFeed extends LeaderFeed {
       .then((cursor) => {
         debug('changefeed started')
 
-        // after the cursor is obtained, change state to follower
-        this._changeState(FOLLOWER)
-
         cursor.each((error, change) => {
           if (error) {
             debug('changefeed error: %O', error)
-            return this._changeState(FOLLOWER)
+            return this.emit(SUB_ERROR, error)
           }
 
           let data = _.get(change, 'new_val')
@@ -153,7 +176,8 @@ export default class RethinkLeaderFeed extends LeaderFeed {
             ? this.emit(HEARTBEAT, value)
             : this.emit(CHANGE, change)
         })
-        done(null, this)
+
+        return done(null, this)
       }, done)
   }
 }

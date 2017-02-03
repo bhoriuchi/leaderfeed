@@ -11,6 +11,8 @@ export const HEARTBEAT = 'heartbeat'
 export const CHANGE = 'change'
 export const NEW_STATE = 'new state'
 export const NEW_LEADER = 'new leader'
+export const SUB_ERROR = 'subscribe error'
+export const SUB_STARTED = 'subscribe started'
 
 export default {
   VALUE,
@@ -20,5 +22,7 @@ export default {
   HEARTBEAT,
   CHANGE,
   NEW_LEADER,
-  NEW_STATE
+  NEW_STATE,
+  SUB_ERROR,
+  SUB_STARTED
 }

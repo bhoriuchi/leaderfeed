@@ -1,5 +1,5 @@
 import rethinkdbdash from 'rethinkdbdash'
-import leaderfeed from '../index'
+import leaderfeed from '../src/index'
 
 const table = 'leaderfeed'
 
@@ -12,12 +12,12 @@ nodeA.on('new state', state => console.log('nodeA state changed to ', state))
 nodeB.on('new state', state => console.log('nodeB state changed to ', state))
 
 // start nodes
-nodeA.start(table, (error, feed) => {
+nodeA.start({ table }, (error, feed) => {
   if (error) return console.log(error)
   console.log('nodeA started')
 })
 
-nodeB.start(table, (error, feed) => {
+nodeB.start({ table }, (error, feed) => {
   if (error) return console.log(error)
   // check if leader
   console.log('nodeB is leader: ', feed.isLeader)

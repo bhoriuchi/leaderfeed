@@ -3,13 +3,27 @@ import Debug from 'debug'
 import doneFactory from './common/doneFactory'
 import EventEmitter from 'events'
 import hat from 'hat'
-import { FOLLOWER, LEADER, HEARTBEAT, NEW_STATE, NEW_LEADER } from './common/constants'
+import {
+  FOLLOWER,
+  LEADER,
+  HEARTBEAT,
+  NEW_STATE,
+  NEW_LEADER,
+  SUB_STARTED,
+  SUB_ERROR
+} from './common/constants'
 
 const debug = Debug('feed:rethinkdb')
 
 export default class LeaderFeed extends EventEmitter {
+  /**
+   * calculates the election timeout and stores common property values
+   * @param options
+   * @param DEFAULT_HEARTBEAT_INTERVAL
+   */
   constructor (options, DEFAULT_HEARTBEAT_INTERVAL) {
     super()
+    debug('initializing leader feed')
 
     this.id = hat()
     this.state = null
@@ -18,13 +32,25 @@ export default class LeaderFeed extends EventEmitter {
     this._electionTimeout = null
     this._heartbeatInterval = null
 
-    let { heartbeatIntervalMs, electionTimeoutMinMs, electionTimeoutMaxMs } = this._options
+    // get common options
+    let {
+      createIfMissing,
+      heartbeatIntervalMs,
+      electionTimeoutMinMs,
+      electionTimeoutMaxMs
+    } = this._options
+
+    delete this._options.createIfMissing
     delete this._options.heartbeatIntervalMs
     delete this._options.electionTimeoutMinMs
     delete this._options.electionTimeoutMaxMs
 
     let min = _.isNumber(electionTimeoutMinMs) ? Math.floor(electionTimeoutMinMs) : null
     let max = _.isNumber(electionTimeoutMaxMs) ? Math.floor(electionTimeoutMaxMs) : null
+
+    this._createIfMissing = _.isBoolean(createIfMissing)
+      ? createIfMissing
+      : true
 
     // calculate timeout thresholds
     this._heartbeatIntervalMs = _.isNumber(heartbeatIntervalMs)
@@ -58,7 +84,7 @@ export default class LeaderFeed extends EventEmitter {
 
       // start the heartbeat listener
       this.on(HEARTBEAT, (leader) => {
-        if (leader !== this.id) debug('heartbeat from %s', value)
+        if (leader !== this.id) debug('heartbeat from %s', leader)
 
         // check if a new leader has been elected
         if (this.leader && this.leader !== leader) this.emit(NEW_LEADER, leader)
@@ -73,16 +99,69 @@ export default class LeaderFeed extends EventEmitter {
         // says otherwise, change to follower
         if (this.state === LEADER && leader !== this.id) return this._changeState(FOLLOWER)
       })
+        .on(SUB_ERROR, error => {
+          return this._changeState(FOLLOWER)
+        })
+        .on(SUB_STARTED, () => {
+          return this._changeState(FOLLOWER)
+        })
 
+      // if create successful, attempt to start
       return this._start(options, (error) => {
         if (error) {
           debug('error during start %O', error)
           return done(error)
         }
 
-        debug('starting feed')
-        return this._subscribe(done)
+        debug('_start successful')
+
+        // attempt to create
+        return this.create(error => {
+          if (error) {
+            debug('error during create %O', error)
+            return done(error)
+          }
+
+          debug('create successful')
+
+          // if start and create are successful, attempt to subscribe
+          debug('starting feed')
+          return this.subscribe(done)
+        })
       })
+    })
+  }
+
+  /**
+   * creates a db/store/table/collection if missing and createIfMissing is true
+   * @param done
+   * @return {*}
+   */
+  create (done) {
+    if (!this._createIfMissing) return done()
+
+    return this._create(error => {
+      if (error) return done(error)
+      return done()
+    })
+  }
+
+  /**
+   * start subscription
+   * @param done
+   * @return {*}
+   */
+  subscribe (done) {
+    return this._subscribe(error => {
+      if (error) {
+        debug('error during subscribe %O', error)
+        this.emit()
+        return done(error)
+      }
+
+      debug('subscribe successful')
+      this.emit(SUB_STARTED)
+      done(null, this)
     })
   }
 
@@ -221,6 +300,18 @@ export default class LeaderFeed extends EventEmitter {
    * @private
    */
   _start (options, done) {
+    return done()
+  }
+
+  /**
+   * should create the store/table/collection if it does not exist
+   * and the createIfMissing option is set to true
+   * and then call the done callback with error or no arguments
+   * @param done
+   * @return {*}
+   * @private
+   */
+  _create (done) {
     return done()
   }
 }

@@ -49,6 +49,8 @@ var HEARTBEAT = 'heartbeat';
 
 var NEW_STATE = 'new state';
 var NEW_LEADER = 'new leader';
+var SUB_ERROR = 'subscribe error';
+var SUB_STARTED = 'subscribe started';
 
 var classCallCheck = function (instance, Constructor) {
   if (!(instance instanceof Constructor)) {
@@ -121,10 +123,17 @@ var debug = Debug('feed:rethinkdb');
 var LeaderFeed = function (_EventEmitter) {
   inherits(LeaderFeed, _EventEmitter);
 
+  /**
+   * calculates the election timeout and stores common property values
+   * @param options
+   * @param DEFAULT_HEARTBEAT_INTERVAL
+   */
   function LeaderFeed(options, DEFAULT_HEARTBEAT_INTERVAL) {
     classCallCheck(this, LeaderFeed);
 
     var _this = possibleConstructorReturn(this, (LeaderFeed.__proto__ || Object.getPrototypeOf(LeaderFeed)).call(this));
+
+    debug('initializing leader feed');
 
     _this.id = hat();
     _this.state = null;
@@ -133,17 +142,23 @@ var LeaderFeed = function (_EventEmitter) {
     _this._electionTimeout = null;
     _this._heartbeatInterval = null;
 
+    // get common options
     var _this$_options = _this._options,
+        createIfMissing = _this$_options.createIfMissing,
         heartbeatIntervalMs = _this$_options.heartbeatIntervalMs,
         electionTimeoutMinMs = _this$_options.electionTimeoutMinMs,
         electionTimeoutMaxMs = _this$_options.electionTimeoutMaxMs;
 
+
+    delete _this._options.createIfMissing;
     delete _this._options.heartbeatIntervalMs;
     delete _this._options.electionTimeoutMinMs;
     delete _this._options.electionTimeoutMaxMs;
 
     var min = _.isNumber(electionTimeoutMinMs) ? Math.floor(electionTimeoutMinMs) : null;
     var max = _.isNumber(electionTimeoutMaxMs) ? Math.floor(electionTimeoutMaxMs) : null;
+
+    _this._createIfMissing = _.isBoolean(createIfMissing) ? createIfMissing : true;
 
     // calculate timeout thresholds
     _this._heartbeatIntervalMs = _.isNumber(heartbeatIntervalMs) ? Math.floor(heartbeatIntervalMs) : DEFAULT_HEARTBEAT_INTERVAL;
@@ -182,7 +197,7 @@ var LeaderFeed = function (_EventEmitter) {
 
         // start the heartbeat listener
         _this2.on(HEARTBEAT, function (leader) {
-          if (leader !== _this2.id) debug('heartbeat from %s', value);
+          if (leader !== _this2.id) debug('heartbeat from %s', leader);
 
           // check if a new leader has been elected
           if (_this2.leader && _this2.leader !== leader) _this2.emit(NEW_LEADER, leader);
@@ -194,17 +209,76 @@ var LeaderFeed = function (_EventEmitter) {
           // if the the node thinks it is the leader but the heartbeat
           // says otherwise, change to follower
           if (_this2.state === LEADER && leader !== _this2.id) return _this2._changeState(FOLLOWER);
+        }).on(SUB_ERROR, function (error) {
+          return _this2._changeState(FOLLOWER);
+        }).on(SUB_STARTED, function () {
+          return _this2._changeState(FOLLOWER);
         });
 
+        // if create successful, attempt to start
         return _this2._start(options, function (error) {
           if (error) {
             debug('error during start %O', error);
             return done(error);
           }
 
-          debug('starting feed');
-          return _this2._subscribe(done);
+          debug('_start successful');
+
+          // attempt to create
+          return _this2.create(function (error) {
+            if (error) {
+              debug('error during create %O', error);
+              return done(error);
+            }
+
+            debug('create successful');
+
+            // if start and create are successful, attempt to subscribe
+            debug('starting feed');
+            return _this2.subscribe(done);
+          });
         });
+      });
+    }
+
+    /**
+     * creates a db/store/table/collection if missing and createIfMissing is true
+     * @param done
+     * @return {*}
+     */
+
+  }, {
+    key: 'create',
+    value: function create(done) {
+      if (!this._createIfMissing) return done();
+
+      return this._create(function (error) {
+        if (error) return done(error);
+        return done();
+      });
+    }
+
+    /**
+     * start subscription
+     * @param done
+     * @return {*}
+     */
+
+  }, {
+    key: 'subscribe',
+    value: function subscribe(done) {
+      var _this3 = this;
+
+      return this._subscribe(function (error) {
+        if (error) {
+          debug('error during subscribe %O', error);
+          _this3.emit();
+          return done(error);
+        }
+
+        debug('subscribe successful');
+        _this3.emit(SUB_STARTED);
+        done(null, _this3);
       });
     }
 
@@ -217,7 +291,7 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_changeState',
     value: function _changeState(state) {
-      var _this3 = this;
+      var _this4 = this;
 
       if (state === this.state) return false;
       debug('changed state %s', state);
@@ -233,10 +307,10 @@ var LeaderFeed = function (_EventEmitter) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
               debug('error sending heartbeat %O', error);
-              _this3._clearHeartbeatInterval();
-              return _this3._changeState(FOLLOWER);
+              _this4._clearHeartbeatInterval();
+              return _this4._changeState(FOLLOWER);
             }
-            _this3._restartHeartbeatInterval();
+            _this4._restartHeartbeatInterval();
           });
 
         case FOLLOWER:
@@ -266,13 +340,13 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartHeartbeatInterval',
     value: function _restartHeartbeatInterval() {
-      var _this4 = this;
+      var _this5 = this;
 
       this._clearHeartbeatInterval();
       this._heartbeatInterval = setInterval(function () {
-        return _this4._heartbeat(function (error) {
+        return _this5._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
-          if (error) _this4._clearHeartbeatInterval();
+          if (error) _this5._clearHeartbeatInterval();
         });
       }, this._heartbeatIntervalMs);
     }
@@ -297,11 +371,11 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartElectionTimeout',
     value: function _restartElectionTimeout() {
-      var _this5 = this;
+      var _this6 = this;
 
       this._clearElectionTimeout();
       this._electionTimeout = setTimeout(function () {
-        return _this5._changeState(LEADER);
+        return _this6._changeState(LEADER);
       }, this.randomElectionTimeout);
     }
 
@@ -361,6 +435,21 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_start',
     value: function _start(options, done) {
+      return done();
+    }
+
+    /**
+     * should create the store/table/collection if it does not exist
+     * and the createIfMissing option is set to true
+     * and then call the done callback with error or no arguments
+     * @param done
+     * @return {*}
+     * @private
+     */
+
+  }, {
+    key: '_create',
+    value: function _create(done) {
       return done();
     }
   }, {

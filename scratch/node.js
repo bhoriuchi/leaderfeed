@@ -6,7 +6,7 @@ var r = require('rethinkdbdash')
 
 let feed = new LeaderFeed(r, 'test')
 
-feed.start('leaderfeed')
+feed.start({ table: 'leaderfeed' })
   .then(function (node) {
     console.log('started leader feed on', node.id)
   }, function (error) {
