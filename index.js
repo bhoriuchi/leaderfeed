@@ -276,12 +276,16 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'create',
     value: function create(done) {
-      if (!this._createIfMissing) return done();
+      try {
+        if (!this._createIfMissing) return done();
 
-      return this._create(function (error) {
-        if (error) return done(error);
-        return done();
-      });
+        return this._create(function (error) {
+          if (error) return done(error);
+          return done();
+        });
+      } catch (error) {
+        return done(error);
+      }
     }
 
     /**
@@ -295,17 +299,21 @@ var LeaderFeed = function (_EventEmitter) {
     value: function subscribe(done) {
       var _this3 = this;
 
-      return this._subscribe(function (error) {
-        if (error) {
-          debug$1('error during subscribe %O', error);
-          _this3.emit();
-          return done(error);
-        }
+      try {
+        return this._subscribe(function (error) {
+          if (error) {
+            debug$1('error during subscribe %O', error);
+            _this3.emit();
+            return done(error);
+          }
 
-        debug$1('subscribe successful');
-        _this3.emit(SUB_STARTED);
-        done(null, _this3);
-      });
+          debug$1('subscribe successful');
+          _this3.emit(SUB_STARTED);
+          done(null, _this3);
+        });
+      } catch (error) {
+        return done(error);
+      }
     }
 
     /**

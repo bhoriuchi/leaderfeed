@@ -3,8 +3,8 @@ Leader election for subscription/changefeed databases
 
 ## Backends supported
 
-* [`RethinkDB`](#RethinkDB)
-* [`MongoDB`](#MongoDB) - developing
+* [`RethinkDB`](#rethinkdb)
+* [`MongoDB`](#mongodb) - developing
 
 ## About
 
@@ -98,7 +98,7 @@ Shortcut for `r.db(databaseName).table(tableName)`
 
 MongoDB specifc API
 
-##### LeaderFeed#MongoDB(`driver` `url:String [,`opts:Object`]) => `MongoLeaderFeed`
+##### LeaderFeed#MongoDB(`driver` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
 
 Initializes a new `RethinkLeaderFeed`
 

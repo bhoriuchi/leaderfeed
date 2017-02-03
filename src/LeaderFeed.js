@@ -138,12 +138,16 @@ export default class LeaderFeed extends EventEmitter {
    * @return {*}
    */
   create (done) {
-    if (!this._createIfMissing) return done()
+    try {
+      if (!this._createIfMissing) return done()
 
-    return this._create(error => {
-      if (error) return done(error)
-      return done()
-    })
+      return this._create(error => {
+        if (error) return done(error)
+        return done()
+      })
+    } catch (error) {
+      return done(error)
+    }
   }
 
   /**
@@ -152,17 +156,21 @@ export default class LeaderFeed extends EventEmitter {
    * @return {*}
    */
   subscribe (done) {
-    return this._subscribe(error => {
-      if (error) {
-        debug('error during subscribe %O', error)
-        this.emit()
-        return done(error)
-      }
+    try {
+      return this._subscribe(error => {
+        if (error) {
+          debug('error during subscribe %O', error)
+          this.emit()
+          return done(error)
+        }
 
-      debug('subscribe successful')
-      this.emit(SUB_STARTED)
-      done(null, this)
-    })
+        debug('subscribe successful')
+        this.emit(SUB_STARTED)
+        done(null, this)
+      })
+    } catch (error) {
+      return done(error)
+    }
   }
 
   /**

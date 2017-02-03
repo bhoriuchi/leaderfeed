@@ -13,9 +13,9 @@ import {
 import LeaderFeed from '../LeaderFeed'
 
 const debug = Debug('feed:rethinkdb')
-const DEFAULT_DB = 'test'
-const ID = 'id'
+const ID = '_id'
 const DEFAULT_HEARTBEAT_INTERVAL = 1000
+const DEFAULT_COLLECTION_SIZE = 100000
 
 export default class MongoLeaderFeed extends LeaderFeed {
   /**
@@ -32,10 +32,11 @@ export default class MongoLeaderFeed extends LeaderFeed {
 
     super(options, DEFAULT_HEARTBEAT_INTERVAL)
 
-    this.table = null
+    this.collection = null
 
     this._url = url
     this._driver = driver
+    this._collectionName = null
   }
 
   /**
@@ -47,10 +48,10 @@ export default class MongoLeaderFeed extends LeaderFeed {
    */
   _start (options, done) {
     try {
-      let { table } = options
+      let { collection } = options
 
-      if (!_.isString(table)) return done(new Error('missing table argument'))
-      this.table = table
+      if (!_.isString(collection)) return done(new Error('missing collection argument'))
+      this._collectionName = collection
 
       return this._driver.connect(this._url, this._options, (error, db) => {
         if (error) return done(error)
@@ -68,7 +69,24 @@ export default class MongoLeaderFeed extends LeaderFeed {
    * @private
    */
   _create (done) {
-    return done()
+    try {
+      return this.db.listCollections({ name: this._collectionName })
+        .toArray((error, collections) => {
+          if (error) return done(error)
+          if (collections.length) return done()
+
+          return this.db.createCollection(this._collectionName, {
+            capped: true,
+            size: DEFAULT_COLLECTION_SIZE
+          }, (error, collection) => {
+            if (error) return done(error)
+            this.collection = collection
+            return done()
+          })
+        })
+    } catch (error) {
+      return done(error)
+    }
   }
 
   /**
@@ -78,6 +96,22 @@ export default class MongoLeaderFeed extends LeaderFeed {
    */
   _heartbeat (done) {
     debug('heartbeat update')
+
+    let db = this.db
+    let collection = this.collection
+
+    return this.collection.update({
+      [ID]: LEADER
+    }, {
+      [VALUE]: this.id
+    }, {
+      upsert: true,
+      $currentDate: {
+        [TIMESTAMP]: { $type: 'timestamp' }
+      }
+    })
+
+
     let r = this.r
     let table = this.collection
 

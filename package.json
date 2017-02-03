@@ -31,7 +31,8 @@
   "dependencies": {
     "debug": "^2.6.0",
     "hat": "0.0.3",
-    "lodash": "^4.17.4"
+    "lodash": "^4.17.4",
+    "mongo-oplog": "^1.1.0"
   },
   "devDependencies": {
     "babel-core": "^6.22.1",
@@ -41,6 +42,7 @@
     "babel-preset-stage-2": "^6.22.0",
     "babel-register": "^6.22.0",
     "babel-runtime": "^6.22.0",
+    "mongodb": "^2.2.22",
     "rethinkdb": "^2.3.3",
     "rethinkdbdash": "^2.3.27",
     "rollup": "^0.41.4",
