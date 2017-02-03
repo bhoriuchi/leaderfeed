@@ -24,7 +24,7 @@ feedA.on('new state', state => console.log('feedA state changed to ', state))
 feedB.on('new state', state => console.log('feedB state changed to ', state))
 
 // start nodes
-feedA.start(table, (error, feed) => {
+feedA.start({ table }, (error, feed) => {
   if (error) return console.error(error)
   
   let { r, db, table } = feed
@@ -32,7 +32,7 @@ feedA.start(table, (error, feed) => {
   r.db(db).table(table).run()
 })
 
-feedB.start(table, (error, feed) => {
+feedB.start({ table }, (error, feed) => {
   if (error) return console.error(error)
     
   // check if leader
@@ -43,27 +43,24 @@ feedB.start(table, (error, feed) => {
 
 ### API
 
-#### LeaderFeed#RethinkDB(`driver` [,`db:String`] [,`opts:Object`])
+#### LeaderFeed#RethinkDB(`driver` [,`db:String`] [,`opts:Object`]) => `RethinkLeaderFeed`
 
 Initializes a new `RethinkLeaderFeed`
 
 * [`db="test"`] - database name
 * [`opts`] - extended rethinkdb connection options
-* [`opts.heartbeatIntervalMs=1000`] - time between heartbeat updates
-* [`opts.electionTimeoutMinMs=3000`] - minimum time before self electing, should be at least `heartbeatIntervalMs * 2`
-* [`opts.electionTimeoutMaxMs=6000`] - maximum time before self electing, should be at least `electionTimeoutMaxMs * 2`
+  * [`opts.heartbeatIntervalMs=1000`] - time between heartbeat updates
+  * [`opts.electionTimeoutMinMs=3000`] - minimum time before self electing, should be at least `heartbeatIntervalMs * 2`
+  * [`opts.electionTimeoutMaxMs=6000`] - maximum time before self electing, should be at least `electionTimeoutMaxMs * 2`
 
-**Returns** { `RethinkLeaderFeed` }
-
-#### RethinkLeaderFeed#start(`table`, [,`conn:Object`] [,`cb:Function`])
+#### RethinkLeaderFeed#start(`opts:Object` [,`cb:Function`]) => `Promise<RethinkLeaderFeed>`
 
 Starts the leaderfeed
 
-* `table` - table name
-* [`conn`] - rethinkdb connection
+* `opts` - options hash
+  * `opts.table` - table name
+  * [`opts.connection`] - rethinkdb connection
 * [`cb`] - callback, returns error as first argument or leader feed as second
-
-**Returns** { `Promise<RethinkLeaderFeed>` }
 
 #### RethinkLeaderFeed#r => `Driver`
 
