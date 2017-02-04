@@ -7,6 +7,7 @@ import {
   FOLLOWER,
   LEADER,
   HEARTBEAT,
+  HEARTBEAT_ERROR,
   NEW_STATE,
   NEW_LEADER,
   SUB_STARTED,
@@ -100,9 +101,14 @@ export default class LeaderFeed extends EventEmitter {
         if (this.state === LEADER && leader !== this.id) return this._changeState(FOLLOWER)
       })
         .on(SUB_ERROR, error => {
+          debug('%s %O', SUB_ERROR, error)
           return this._changeState(FOLLOWER)
         })
         .on(SUB_STARTED, () => {
+          return this._changeState(FOLLOWER)
+        })
+        .on(HEARTBEAT_ERROR, error => {
+          debug('%s %O', HEARTBEAT_ERROR, error)
           return this._changeState(FOLLOWER)
         })
 
@@ -224,7 +230,10 @@ export default class LeaderFeed extends EventEmitter {
     this._heartbeatInterval = setInterval(() => {
       return this._heartbeat((error) => {
         // if there was an error updating the heartbeat, cancel the interval
-        if (error) this._clearHeartbeatInterval()
+        if (error) {
+          this._clearHeartbeatInterval()
+          this.emit(HEARTBEAT_ERROR, error)
+        }
       })
     }, this._heartbeatIntervalMs)
   }

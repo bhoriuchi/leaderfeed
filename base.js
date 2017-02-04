@@ -40,12 +40,14 @@ function doneFactory(callback, resolve, reject) {
 
 
 
+
 // raft states
 var LEADER = 'leader';
 var FOLLOWER = 'follower';
 
 // events
 var HEARTBEAT = 'heartbeat';
+var HEARTBEAT_ERROR = 'heartbeat error';
 
 var NEW_STATE = 'new state';
 var NEW_LEADER = 'new leader';
@@ -210,8 +212,12 @@ var LeaderFeed = function (_EventEmitter) {
           // says otherwise, change to follower
           if (_this2.state === LEADER && leader !== _this2.id) return _this2._changeState(FOLLOWER);
         }).on(SUB_ERROR, function (error) {
+          debug('%s %O', SUB_ERROR, error);
           return _this2._changeState(FOLLOWER);
         }).on(SUB_STARTED, function () {
+          return _this2._changeState(FOLLOWER);
+        }).on(HEARTBEAT_ERROR, function (error) {
+          debug('%s %O', HEARTBEAT_ERROR, error);
           return _this2._changeState(FOLLOWER);
         });
 
@@ -354,7 +360,10 @@ var LeaderFeed = function (_EventEmitter) {
       this._heartbeatInterval = setInterval(function () {
         return _this5._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
-          if (error) _this5._clearHeartbeatInterval();
+          if (error) {
+            _this5._clearHeartbeatInterval();
+            _this5.emit(HEARTBEAT_ERROR, error);
+          }
         });
       }, this._heartbeatIntervalMs);
     }

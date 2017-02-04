@@ -2,7 +2,6 @@ import _ from 'lodash'
 import Debug from 'debug'
 
 import {
-  FOLLOWER,
   LEADER,
   VALUE,
   TIMESTAMP,
@@ -140,8 +139,7 @@ export default class RethinkLeaderFeed extends LeaderFeed {
       .then(() => {
         return done()
       }, error => {
-        done(error)
-        return this._changeState(FOLLOWER)
+        return done(error)
       })
   }
 

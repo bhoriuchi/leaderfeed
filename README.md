@@ -52,10 +52,11 @@ feedB.start({ table }, (error, feed) => {
 
 RethinkDB specific API
 
-##### LeaderFeed#RethinkDB(`driver` [,`db:String`] [,`opts:Object`]) => `RethinkLeaderFeed`
+##### LeaderFeed#RethinkDB(`driver:Driver` [,`db:String`] [,`opts:Object`]) => `RethinkLeaderFeed`
 
 Initializes a new `RethinkLeaderFeed`
 
+* `driver` - rethinkdb driver
 * [`db="test"`] - database name
 * [`opts`] - extended rethinkdb connection options
   * [`createIfMissing=true`] - create the db and table if missing
@@ -69,7 +70,7 @@ Starts the leaderfeed
 
 * `opts` - options hash
   * `table` - table name
-  * [`connection`] - rethinkdb connection
+  * [`connection`] - rethinkdb connection if already connected
 * [`cb`] - callback, returns error as first argument or leader feed as second
 
 ##### RethinkLeaderFeed#r => `Driver`
@@ -96,18 +97,34 @@ Shortcut for `r.db(databaseName).table(tableName)`
 
 #### MongoDB
 
-MongoDB specifc API
+MongoDB specifc API. Please note that MongoDB uses capped collections and tailable cursors for streaming queries. Because of the limitations on capped collections it is advised that the collection used for leaderfeed is dedicated and set up by leaderfeed.
 
-##### LeaderFeed#MongoDB(`driver` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
+##### LeaderFeed#MongoDB(`driver:Driver` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
 
-Initializes a new `RethinkLeaderFeed`
+Initializes a new `MongoLeaderFeed`
 
+* `driver` - mongodb driver
 * `url` - database name
 * [`opts`] - extended mongodb connection options
   * [`createIfMissing=true`] - create the db and table if missing
   * [`heartbeatIntervalMs=1000`] - time between heartbeat updates
   * [`electionTimeoutMinMs=2*heartbeatIntervalMs`] - minimum time before self electing, should be at least `heartbeatIntervalMs * 2`
   * [`electionTimeoutMaxMs=2*electionTimeoutMaxMs`] - maximum time before self electing, should be at least `electionTimeoutMaxMs * 2`
+  * [`collectionSizeBytes=100000`] - size in bytes to use when creating the capped collection
+  * [`collectionMaxDocs=20`] - maximum documents allowed in the capped collection before overwriting begins
+
+##### LeaderFeed#MongoDB(`db:Db` [,`opts:Object`]) => `MongoLeaderFeed`
+
+Initializes a new `MongoLeaderFeed`
+
+* `db` - mongodb database
+* [`opts`] - options hash
+  * [`createIfMissing=true`] - create the db and table if missing
+  * [`heartbeatIntervalMs=1000`] - time between heartbeat updates
+  * [`electionTimeoutMinMs=2*heartbeatIntervalMs`] - minimum time before self electing, should be at least `heartbeatIntervalMs * 2`
+  * [`electionTimeoutMaxMs=2*electionTimeoutMaxMs`] - maximum time before self electing, should be at least `electionTimeoutMaxMs * 2`
+  * [`collectionSizeBytes=100000`] - size in bytes to use when creating the capped collection
+  * [`collectionMaxDocs=20`] - maximum documents allowed in the capped collection before overwriting begins
 
 ##### MongoLeaderFeed#start(`opts:Object` [,`cb:Function`]) => `Promise<MongoLeaderFeed>`
 
@@ -151,6 +168,11 @@ Fired when the subscribe method is successful signaling that the subscription ha
 #### `subscribe error` => `error`
 
 Fired when there is an error after the subscription has started. Signals the node to change to `follower` state
+
+#### `heartbeat error` => `error`
+
+Fired when there is an error after trying to send a heartbeat update. Signals the node to change to `follower` state
+
 
 ---
 

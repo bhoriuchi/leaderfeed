@@ -1,30 +1,26 @@
-import MongoOplog from 'mongo-oplog'
-
-let url = 'mongodb://localhost:27017/local'
+import mongodb from 'mongodb'
+import _ from 'lodash'
+let url = 'mongodb://localhost:27017/test'
 let name = 'leaderfeed'
 
-const oplog = MongoOplog(url)
+mongodb.MongoClient.connect(url, (error, db) => {
+  if (error) return console.log({ error })
 
-oplog.tail((err) => {
-  if (err) console.log('err', err)
-})
+  console.log(db.connect)
+  process.exit()
 
-oplog.on('op', op => {
-  console.log({ op })
-})
+  db.collection(name, (error, collection) => {
+    if (error) return console.log({ error })
 
-oplog.on('insert', insert => {
-  console.log({ insert })
-})
+    let cursor = collection.find({}, { tailable: true, awaitdata: true })
 
-oplog.on('update', update => {
-  console.log({ update })
-})
+    let stream = cursor.stream()
 
-oplog.on('delete', del => {
-  console.log({ del })
-})
-
-oplog.on('error', error => {
-  console.log({ error })
+    stream.on('data', (data) => {
+      console.log({ data })
+    })
+    stream.on('error', (error) => {
+      console.log({ error })
+    })
+  })
 })

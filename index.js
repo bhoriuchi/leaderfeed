@@ -10,6 +10,7 @@ var hat = _interopDefault(require('hat'));
 // leader record schema properties
 var VALUE = 'value';
 var TIMESTAMP = 'timestamp';
+var TYPE = 'type';
 
 // raft states
 var LEADER = 'leader';
@@ -17,6 +18,7 @@ var FOLLOWER = 'follower';
 
 // events
 var HEARTBEAT = 'heartbeat';
+var HEARTBEAT_ERROR = 'heartbeat error';
 var CHANGE = 'change';
 var NEW_STATE = 'new state';
 var NEW_LEADER = 'new leader';
@@ -26,15 +28,23 @@ var SUB_STARTED = 'subscribe started';
 var CONST = {
   VALUE: VALUE,
   TIMESTAMP: TIMESTAMP,
+  TYPE: TYPE,
   LEADER: LEADER,
   FOLLOWER: FOLLOWER,
   HEARTBEAT: HEARTBEAT,
+  HEARTBEAT_ERROR: HEARTBEAT_ERROR,
   CHANGE: CHANGE,
   NEW_LEADER: NEW_LEADER,
   NEW_STATE: NEW_STATE,
   SUB_ERROR: SUB_ERROR,
   SUB_STARTED: SUB_STARTED
 };
+
+function pad(str) {
+  var len = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 32;
+
+  return String(new Array(len + 1).join(' ') + str).slice(-1 * Math.abs(len));
+}
 
 /**
  * create a new done handler
@@ -236,8 +246,12 @@ var LeaderFeed = function (_EventEmitter) {
           // says otherwise, change to follower
           if (_this2.state === LEADER && leader !== _this2.id) return _this2._changeState(FOLLOWER);
         }).on(SUB_ERROR, function (error) {
+          debug$1('%s %O', SUB_ERROR, error);
           return _this2._changeState(FOLLOWER);
         }).on(SUB_STARTED, function () {
+          return _this2._changeState(FOLLOWER);
+        }).on(HEARTBEAT_ERROR, function (error) {
+          debug$1('%s %O', HEARTBEAT_ERROR, error);
           return _this2._changeState(FOLLOWER);
         });
 
@@ -380,7 +394,10 @@ var LeaderFeed = function (_EventEmitter) {
       this._heartbeatInterval = setInterval(function () {
         return _this5._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
-          if (error) _this5._clearHeartbeatInterval();
+          if (error) {
+            _this5._clearHeartbeatInterval();
+            _this5.emit(HEARTBEAT_ERROR, error);
+          }
         });
       }, this._heartbeatIntervalMs);
     }
@@ -507,9 +524,186 @@ var LeaderFeed = function (_EventEmitter) {
 }(EventEmitter);
 
 var debug = Debug('feed:rethinkdb');
-var DEFAULT_DB = 'test';
-var ID = 'id';
 var DEFAULT_HEARTBEAT_INTERVAL = 1000;
+var DEFAULT_COLLECTION_SIZE = 100000;
+var DEFAULT_MAX_DOCS = 20;
+
+var MongoLeaderFeed = function (_LeaderFeed) {
+  inherits(MongoLeaderFeed, _LeaderFeed);
+
+  /**
+   * initializes the leaderfeed
+   * @param driver
+   * @param db
+   * @param options
+   */
+  function MongoLeaderFeed(driver, url, options) {
+    classCallCheck(this, MongoLeaderFeed);
+
+    debug('initializing leader feed');
+    if (_.isObject(url)) {
+      options = url;
+      url = null;
+    }
+
+    // check if the driver is a db or driver
+    var _this = possibleConstructorReturn(this, (MongoLeaderFeed.__proto__ || Object.getPrototypeOf(MongoLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL));
+
+    _this.db = _.isObject(driver) && !_.isFunction(driver.connect) ? driver : null;
+
+    if (!driver && !_this.db) throw new Error('no driver specified');
+    if (!_.isString(url) && !_this.db) throw new Error('no url specified');
+
+    _this.collection = null;
+
+    _this._url = url;
+    _this._driver = _this.db ? null : driver;
+    _this._collectionName = null;
+
+    // mongo capped collection create options
+    _this._createOpts = {
+      capped: true,
+      size: _this._options.collectionSizeBytes || DEFAULT_COLLECTION_SIZE,
+      max: _this._options.collectionMaxDocs || DEFAULT_MAX_DOCS
+    };
+
+    // remove the size options
+    delete _this._options.collectionSizeBytes;
+    delete _this._options.collectionMaxDocs;
+    return _this;
+  }
+
+  /**
+   * establishes a connection
+   * @param options
+   * @param done
+   * @returns {*}
+   * @private
+   */
+
+
+  createClass(MongoLeaderFeed, [{
+    key: '_start',
+    value: function _start(options, done) {
+      var _this2 = this;
+
+      try {
+        var collection = options.collection;
+
+
+        if (!_.isString(collection)) return done(new Error('missing collection argument'));
+        this._collectionName = collection;
+
+        // if the db is already connected we are done
+        if (this.db) return done();
+
+        // otherwise connect it
+        return this._driver.connect(this._url, this._options, function (error, db) {
+          if (error) return done(error);
+          _this2.db = db;
+          return done();
+        });
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * create the db and table if they do not exist
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_create',
+    value: function _create(done) {
+      var _this3 = this;
+
+      try {
+        return this.db.listCollections({ name: this._collectionName }).toArray(function (error, collections) {
+          if (error) return done(error);
+
+          // if the collection exists, get it and return done
+          if (collections.length) {
+            return _this3.db.collection(_this3._collectionName, function (error, collection) {
+              if (error) return done(error);
+              _this3.collection = collection;
+              return done();
+            });
+          }
+
+          // if the collection doesnt exist, create it and add 1 record
+          return _this3.db.createCollection(_this3._collectionName, _this3._createOpts, function (error, collection) {
+            var _collection$insertOne;
+
+            if (error) return done(error);
+            _this3.collection = collection;
+
+            return collection.insertOne((_collection$insertOne = {}, defineProperty(_collection$insertOne, TYPE, pad(LEADER)), defineProperty(_collection$insertOne, VALUE, pad(id)), defineProperty(_collection$insertOne, TIMESTAMP, Date.now()), _collection$insertOne), function (error) {
+              if (error) return done(error);
+              return done();
+            });
+          });
+        });
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * sends a heartbeat
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_heartbeat',
+    value: function _heartbeat(done) {
+      var _collection$insertOne2;
+
+      debug('heartbeat update');
+
+      this.collection.insertOne((_collection$insertOne2 = {}, defineProperty(_collection$insertOne2, TYPE, pad(LEADER)), defineProperty(_collection$insertOne2, VALUE, pad(id)), defineProperty(_collection$insertOne2, TIMESTAMP, Date.now()), _collection$insertOne2), function (error) {
+        return error ? done(error) : done();
+      });
+    }
+
+    /**
+     * sets up a subscription
+     * @param done
+     * @returns {Promise.<TResult>}
+     * @private
+     */
+
+  }, {
+    key: '_subscribe',
+    value: function _subscribe(done) {
+      var _this4 = this;
+
+      var stream = this.collection.find({}, {
+        tailable: true,
+        awaitdata: true
+      }).stream();
+
+      stream.on('data', function (data) {
+        var type = _.get(data, TYPE, '').trim();
+        var value = _.get(data, VALUE);
+
+        return type === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, data);
+      });
+      stream.on('error', function (error) {
+        debug('stream error: %O', error);
+        return _this4.emit(SUB_ERROR, error);
+      });
+    }
+  }]);
+  return MongoLeaderFeed;
+}(LeaderFeed);
+
+var debug$2 = Debug('feed:rethinkdb');
+var DEFAULT_DB = 'test';
+var ID$1 = 'id';
+var DEFAULT_HEARTBEAT_INTERVAL$1 = 1000;
 
 var RethinkLeaderFeed = function (_LeaderFeed) {
   inherits(RethinkLeaderFeed, _LeaderFeed);
@@ -529,7 +723,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
       db = DEFAULT_DB;
     }
 
-    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL));
+    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$1));
 
     _this.r = null;
     _this.db = db || DEFAULT_DB;
@@ -599,8 +793,8 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
       var r = this.r;
 
       // create the db and table if they do not exist
-      return r.dbList().contains(this.db).branch(r.db(this.db).tableList().contains(this.table).branch(true, r.db(this.db).tableCreate(this.table, { primaryKey: ID })), r.dbCreate(this.db).do(function () {
-        return r.db(_this3.db).tableCreate(_this3.table, { primaryKey: ID });
+      return r.dbList().contains(this.db).branch(r.db(this.db).tableList().contains(this.table).branch(true, r.db(this.db).tableCreate(this.table, { primaryKey: ID$1 })), r.dbCreate(this.db).do(function () {
+        return r.db(_this3.db).tableCreate(_this3.table, { primaryKey: ID$1 });
       })).run(this.connection).then(function () {
         _this3.collection = r.db(_this3.db).table(_this3.table);
         return done();
@@ -616,15 +810,14 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
   }, {
     key: '_heartbeat',
     value: function _heartbeat(done) {
-      var _table$insert,
-          _this4 = this;
+      var _table$insert;
 
-      debug('heartbeat update');
+      debug$2('heartbeat update');
       var r = this.r;
       var table = this.collection;
 
       // insert a heartbeat
-      table.insert((_table$insert = {}, defineProperty(_table$insert, ID, LEADER), defineProperty(_table$insert, VALUE, this.id), defineProperty(_table$insert, TIMESTAMP, r.now()), _table$insert), {
+      table.insert((_table$insert = {}, defineProperty(_table$insert, ID$1, LEADER), defineProperty(_table$insert, VALUE, this.id), defineProperty(_table$insert, TIMESTAMP, r.now()), _table$insert), {
         durability: 'hard',
         conflict: 'update'
       }).do(function (summary) {
@@ -632,8 +825,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
       }).run(this.connection).then(function () {
         return done();
       }, function (error) {
-        done(error);
-        return _this4._changeState(FOLLOWER);
+        return done(error);
       });
     }
 
@@ -647,7 +839,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
   }, {
     key: '_subscribe',
     value: function _subscribe(done) {
-      var _this5 = this;
+      var _this4 = this;
 
       var r = this.r,
           connection = this.connection,
@@ -656,23 +848,23 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 
 
       return r.db(db).table(table).changes().run(connection).then(function (cursor) {
-        debug('changefeed started');
+        debug$2('changefeed started');
 
         cursor.each(function (error, change) {
           if (error) {
-            debug('changefeed error: %O', error);
-            return _this5.emit(SUB_ERROR, error);
+            debug$2('changefeed error: %O', error);
+            return _this4.emit(SUB_ERROR, error);
           }
 
           var data = _.get(change, 'new_val');
-          var id = _.get(data, ID);
+          var id = _.get(data, ID$1);
           var value = _.get(data, VALUE);
 
           // emit the appropriate event
-          return id === LEADER ? _this5.emit(HEARTBEAT, value) : _this5.emit(CHANGE, change);
+          return id === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, change);
         });
 
-        return done(null, _this5);
+        return done(null, _this4);
       }, done);
     }
   }]);
@@ -681,6 +873,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 
 var index = {
   CONST: CONST,
+  MongoDB: MongoLeaderFeed,
   RethinkDB: RethinkLeaderFeed
 };
 
