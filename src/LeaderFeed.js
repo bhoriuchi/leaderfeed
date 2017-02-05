@@ -14,7 +14,7 @@ import {
   SUB_ERROR
 } from './common/constants'
 
-const debug = Debug('feed:rethinkdb')
+const debug = Debug('feed:base')
 
 export default class LeaderFeed extends EventEmitter {
   /**
@@ -186,7 +186,7 @@ export default class LeaderFeed extends EventEmitter {
    */
   _changeState (state) {
     if (state === this.state) return false
-    debug('changed state %s', state)
+    debug('changed to state: %s', state)
     this.emit(NEW_STATE, state)
 
     switch (state) {

@@ -120,7 +120,7 @@ var possibleConstructorReturn = function (self, call) {
   return call && (typeof call === "object" || typeof call === "function") ? call : self;
 };
 
-var debug = Debug('feed:rethinkdb');
+var debug = Debug('feed:base');
 
 var LeaderFeed = function (_EventEmitter) {
   inherits(LeaderFeed, _EventEmitter);
@@ -308,7 +308,7 @@ var LeaderFeed = function (_EventEmitter) {
       var _this4 = this;
 
       if (state === this.state) return false;
-      debug('changed state %s', state);
+      debug('changed to state: %s', state);
       this.emit(NEW_STATE, state);
 
       switch (state) {

@@ -1,7 +1,7 @@
-process.env.DEBUG = 'feed:rethinkdb'
+process.env.DEBUG = 'feed:*'
 
 require('babel-register')
-var LeaderFeed = require('../src/rethinkdb/index').default
+var LeaderFeed = require('../src/index').default.RethinkDB
 var r = require('rethinkdbdash')
 
 let feed = new LeaderFeed(r, 'test')

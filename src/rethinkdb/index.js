@@ -34,9 +34,8 @@ export default class RethinkLeaderFeed extends LeaderFeed {
     super(options, DEFAULT_HEARTBEAT_INTERVAL)
 
     this.r = null
-    this.db = db || DEFAULT_DB
-    this.table = null
-    this.collection = null
+    this._db = db || DEFAULT_DB
+    this._table = null
     this._driver = driver
   }
 
@@ -52,7 +51,7 @@ export default class RethinkLeaderFeed extends LeaderFeed {
       let { table, connection } = options
 
       if (!_.isString(table)) return done(new Error('missing table argument'))
-      this.table = table
+      this._table = table
 
       // intelligently connect to the rethinkdb database
       if (!_.isFunction(this._driver.connect) || _.has(this._driver, '_poolMaster')) {
@@ -91,21 +90,22 @@ export default class RethinkLeaderFeed extends LeaderFeed {
 
     // create the db and table if they do not exist
     return r.dbList()
-      .contains(this.db)
+      .contains(this._db)
       .branch(
-        r.db(this.db)
+        r.db(this._db)
           .tableList()
-          .contains(this.table)
+          .contains(this._table)
           .branch(
             true,
-            r.db(this.db).tableCreate(this.table, { primaryKey: ID })
+            r.db(this._db).tableCreate(this._table, { primaryKey: ID })
           ),
-        r.dbCreate(this.db)
-          .do(() => r.db(this.db).tableCreate(this.table, { primaryKey: ID }))
+        r.dbCreate(this._db)
+          .do(() => r.db(this._db).tableCreate(this._table, { primaryKey: ID }))
       )
       .run(this.connection)
       .then(() => {
-        this.collection = r.db(this.db).table(this.table)
+        this.db = r.db(this._db)
+        this.table = this.db.table(this._table)
         return done()
       }, done)
   }
@@ -118,7 +118,7 @@ export default class RethinkLeaderFeed extends LeaderFeed {
   _heartbeat (done) {
     debug('heartbeat update')
     let r = this.r
-    let table = this.collection
+    let table = this.table
 
     // insert a heartbeat
     table.insert({
@@ -150,32 +150,32 @@ export default class RethinkLeaderFeed extends LeaderFeed {
    * @private
    */
   _subscribe (done) {
-    let { r, connection, table, db } = this
+    try {
+      return this.table.changes()
+        .run(this.connection)
+        .then((cursor) => {
+          debug('changefeed started')
 
-    return r.db(db)
-      .table(table)
-      .changes()
-      .run(connection)
-      .then((cursor) => {
-        debug('changefeed started')
+          cursor.each((error, change) => {
+            if (error) {
+              debug('changefeed error: %O', error)
+              return this.emit(SUB_ERROR, error)
+            }
 
-        cursor.each((error, change) => {
-          if (error) {
-            debug('changefeed error: %O', error)
-            return this.emit(SUB_ERROR, error)
-          }
+            let data = _.get(change, 'new_val')
+            let id = _.get(data, ID)
+            let value = _.get(data, VALUE)
 
-          let data = _.get(change, 'new_val')
-          let id = _.get(data, ID)
-          let value = _.get(data, VALUE)
+            // emit the appropriate event
+            return id === LEADER
+              ? this.emit(HEARTBEAT, value)
+              : this.emit(CHANGE, change)
+          })
 
-          // emit the appropriate event
-          return id === LEADER
-            ? this.emit(HEARTBEAT, value)
-            : this.emit(CHANGE, change)
-        })
-
-        return done(null, this)
-      }, done)
+          return done(null, this)
+        }, done)
+    } catch (error) {
+      done(error)
+    }
   }
 }

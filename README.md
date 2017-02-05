@@ -4,11 +4,11 @@ Leader election for subscription/changefeed databases
 ## Backends supported
 
 * [`RethinkDB`](#rethinkdb)
-* [`MongoDB`](#mongodb) - developing
+* [`MongoDB`](#mongodb)
 
 ## About
 
-`leaderfeed` is a simple leader election library for use with databases that support subscriptions/changefeeds.
+`leaderfeed` is a simple leader election library for use with databases that support feeds (aka streams, subscriptions, changefeeds, live queries, streaming queries, etc.)
 
 The election algorithm borrows from [`raft`](https://raft.github.io/) but has no concept of terms or log distribution.
 
@@ -81,17 +81,17 @@ RethinkDB driver
 
 RethinkDB connection (undefined if driver is `rethinkdbdash`)
 
-##### RethinkLeaderFeed#collection => `Selection`
+##### RethinkLeaderFeed#db => `Db`
 
-Shortcut for `r.db(databaseName).table(tableName)`
+RethinkDB database selection
 
 ##### RethinkLeaderFeed#id => `String`
 
 ##### RethinkLeaderFeed#isLeader => `Boolean`
 
-##### RethinkLeaderFeed#db => `String`
+##### RethinkLeaderFeed#table => `Table`
 
-##### RethinkLeaderFeed#table => `String`
+RethinkDB table selection
 
 ---
 
@@ -99,11 +99,11 @@ Shortcut for `r.db(databaseName).table(tableName)`
 
 MongoDB specifc API. Please note that MongoDB uses capped collections and tailable cursors for streaming queries. Because of the limitations on capped collections it is advised that the collection used for leaderfeed is dedicated and set up by leaderfeed.
 
-##### LeaderFeed#MongoDB(`driver:Driver` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
+##### LeaderFeed#MongoDB(`client:MongoClient` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
 
 Initializes a new `MongoLeaderFeed`
 
-* `driver` - mongodb driver
+* `client` - mongodb MongoClient
 * `url` - database name
 * [`opts`] - extended mongodb connection options
   * [`createIfMissing=true`] - create the db and table if missing
@@ -131,19 +131,18 @@ Initializes a new `MongoLeaderFeed`
 Starts the leaderfeed
 
 * `opts` - options hash
-  * `table` - table name
+  * `collection` - collection name
 * [`cb`] - callback, returns error as first argument or leader feed as second
 
-
-##### RethinkLeaderFeed#db => `Object`
+##### MongoLeaderFeed#db => `Object`
 
 MongoDB database connecion
 
-##### RethinkLeaderFeed#id => `String`
+##### MongoLeaderFeed#id => `String`
 
-##### RethinkLeaderFeed#isLeader => `Boolean`
+##### MongoLeaderFeed#isLeader => `Boolean`
 
-##### RethinkLeaderFeed#table => `String`
+##### MongoLeaderFeed#collection => `Collection`
 
 ---
 

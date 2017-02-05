@@ -14,7 +14,7 @@ import {
 
 import LeaderFeed from '../LeaderFeed'
 
-const debug = Debug('feed:rethinkdb')
+const debug = Debug('feed:mongodb')
 const ID = '_id'
 const DEFAULT_HEARTBEAT_INTERVAL = 1000
 const DEFAULT_COLLECTION_SIZE = 100000
@@ -72,6 +72,7 @@ export default class MongoLeaderFeed extends LeaderFeed {
    * @private
    */
   _start (options, done) {
+    debug('called _start')
     try {
       let { collection } = options
 
@@ -88,6 +89,7 @@ export default class MongoLeaderFeed extends LeaderFeed {
         return done()
       })
     } catch (error) {
+      debug('error in _start %O', error)
       return done(error)
     }
   }
@@ -119,7 +121,7 @@ export default class MongoLeaderFeed extends LeaderFeed {
 
             return collection.insertOne({
               [TYPE]: pad(LEADER),
-              [VALUE]: pad(id),
+              [VALUE]: pad(this.id),
               [TIMESTAMP]: Date.now()
             }, (error) => {
               if (error) return done(error)
@@ -142,7 +144,7 @@ export default class MongoLeaderFeed extends LeaderFeed {
 
     this.collection.insertOne({
       [TYPE]: pad(LEADER),
-      [VALUE]: pad(id),
+      [VALUE]: pad(this.id),
       [TIMESTAMP]: Date.now()
     }, error => {
       return error

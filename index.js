@@ -154,7 +154,7 @@ var possibleConstructorReturn = function (self, call) {
   return call && (typeof call === "object" || typeof call === "function") ? call : self;
 };
 
-var debug$1 = Debug('feed:rethinkdb');
+var debug$1 = Debug('feed:base');
 
 var LeaderFeed = function (_EventEmitter) {
   inherits(LeaderFeed, _EventEmitter);
@@ -342,7 +342,7 @@ var LeaderFeed = function (_EventEmitter) {
       var _this4 = this;
 
       if (state === this.state) return false;
-      debug$1('changed state %s', state);
+      debug$1('changed to state: %s', state);
       this.emit(NEW_STATE, state);
 
       switch (state) {
@@ -523,7 +523,7 @@ var LeaderFeed = function (_EventEmitter) {
   return LeaderFeed;
 }(EventEmitter);
 
-var debug = Debug('feed:rethinkdb');
+var debug = Debug('feed:mongodb');
 var DEFAULT_HEARTBEAT_INTERVAL = 1000;
 var DEFAULT_COLLECTION_SIZE = 100000;
 var DEFAULT_MAX_DOCS = 20;
@@ -587,6 +587,7 @@ var MongoLeaderFeed = function (_LeaderFeed) {
     value: function _start(options, done) {
       var _this2 = this;
 
+      debug('called _start');
       try {
         var collection = options.collection;
 
@@ -604,6 +605,7 @@ var MongoLeaderFeed = function (_LeaderFeed) {
           return done();
         });
       } catch (error) {
+        debug('error in _start %O', error);
         return done(error);
       }
     }
@@ -639,7 +641,7 @@ var MongoLeaderFeed = function (_LeaderFeed) {
             if (error) return done(error);
             _this3.collection = collection;
 
-            return collection.insertOne((_collection$insertOne = {}, defineProperty(_collection$insertOne, TYPE, pad(LEADER)), defineProperty(_collection$insertOne, VALUE, pad(id)), defineProperty(_collection$insertOne, TIMESTAMP, Date.now()), _collection$insertOne), function (error) {
+            return collection.insertOne((_collection$insertOne = {}, defineProperty(_collection$insertOne, TYPE, pad(LEADER)), defineProperty(_collection$insertOne, VALUE, pad(_this3.id)), defineProperty(_collection$insertOne, TIMESTAMP, Date.now()), _collection$insertOne), function (error) {
               if (error) return done(error);
               return done();
             });
@@ -663,7 +665,7 @@ var MongoLeaderFeed = function (_LeaderFeed) {
 
       debug('heartbeat update');
 
-      this.collection.insertOne((_collection$insertOne2 = {}, defineProperty(_collection$insertOne2, TYPE, pad(LEADER)), defineProperty(_collection$insertOne2, VALUE, pad(id)), defineProperty(_collection$insertOne2, TIMESTAMP, Date.now()), _collection$insertOne2), function (error) {
+      this.collection.insertOne((_collection$insertOne2 = {}, defineProperty(_collection$insertOne2, TYPE, pad(LEADER)), defineProperty(_collection$insertOne2, VALUE, pad(this.id)), defineProperty(_collection$insertOne2, TIMESTAMP, Date.now()), _collection$insertOne2), function (error) {
         return error ? done(error) : done();
       });
     }
@@ -726,9 +728,8 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
     var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$1));
 
     _this.r = null;
-    _this.db = db || DEFAULT_DB;
-    _this.table = null;
-    _this.collection = null;
+    _this._db = db || DEFAULT_DB;
+    _this._table = null;
     _this._driver = driver;
     return _this;
   }
@@ -753,7 +754,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 
 
         if (!_.isString(table)) return done(new Error('missing table argument'));
-        this.table = table;
+        this._table = table;
 
         // intelligently connect to the rethinkdb database
         if (!_.isFunction(this._driver.connect) || _.has(this._driver, '_poolMaster')) {
@@ -793,10 +794,11 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
       var r = this.r;
 
       // create the db and table if they do not exist
-      return r.dbList().contains(this.db).branch(r.db(this.db).tableList().contains(this.table).branch(true, r.db(this.db).tableCreate(this.table, { primaryKey: ID$1 })), r.dbCreate(this.db).do(function () {
-        return r.db(_this3.db).tableCreate(_this3.table, { primaryKey: ID$1 });
+      return r.dbList().contains(this._db).branch(r.db(this._db).tableList().contains(this._table).branch(true, r.db(this._db).tableCreate(this._table, { primaryKey: ID$1 })), r.dbCreate(this._db).do(function () {
+        return r.db(_this3._db).tableCreate(_this3._table, { primaryKey: ID$1 });
       })).run(this.connection).then(function () {
-        _this3.collection = r.db(_this3.db).table(_this3.table);
+        _this3.db = r.db(_this3._db);
+        _this3.table = _this3.db.table(_this3._table);
         return done();
       }, done);
     }
@@ -814,7 +816,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 
       debug$2('heartbeat update');
       var r = this.r;
-      var table = this.collection;
+      var table = this.table;
 
       // insert a heartbeat
       table.insert((_table$insert = {}, defineProperty(_table$insert, ID$1, LEADER), defineProperty(_table$insert, VALUE, this.id), defineProperty(_table$insert, TIMESTAMP, r.now()), _table$insert), {
@@ -841,31 +843,29 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
     value: function _subscribe(done) {
       var _this4 = this;
 
-      var r = this.r,
-          connection = this.connection,
-          table = this.table,
-          db = this.db;
+      try {
+        return this.table.changes().run(this.connection).then(function (cursor) {
+          debug$2('changefeed started');
 
+          cursor.each(function (error, change) {
+            if (error) {
+              debug$2('changefeed error: %O', error);
+              return _this4.emit(SUB_ERROR, error);
+            }
 
-      return r.db(db).table(table).changes().run(connection).then(function (cursor) {
-        debug$2('changefeed started');
+            var data = _.get(change, 'new_val');
+            var id = _.get(data, ID$1);
+            var value = _.get(data, VALUE);
 
-        cursor.each(function (error, change) {
-          if (error) {
-            debug$2('changefeed error: %O', error);
-            return _this4.emit(SUB_ERROR, error);
-          }
+            // emit the appropriate event
+            return id === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, change);
+          });
 
-          var data = _.get(change, 'new_val');
-          var id = _.get(data, ID$1);
-          var value = _.get(data, VALUE);
-
-          // emit the appropriate event
-          return id === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, change);
-        });
-
-        return done(null, _this4);
-      }, done);
+          return done(null, _this4);
+        }, done);
+      } catch (error) {
+        done(error);
+      }
     }
   }]);
   return RethinkLeaderFeed;
