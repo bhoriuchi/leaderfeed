@@ -3,8 +3,9 @@ Leader election for subscription/changefeed databases
 
 ## Backends supported
 
-* [`RethinkDB`](#rethinkdb)
 * [`MongoDB`](#mongodb)
+* [`Redis`](#redis) - developing
+* [`RethinkDB`](#rethinkdb)
 
 ## About
 
@@ -104,6 +105,53 @@ RethinkDB database selection
 ##### RethinkLeaderFeed#table => `Table`
 
 RethinkDB table selection
+
+---
+
+#### Redis
+
+Redis specific API. Please note that leaderfeed will not emit `changes` events for redis and that the pub/sub channel specified in start should be reserved for leaderfeed
+
+##### LeaderFeed#Redis(`redis:Redis` `opts:Object`) => `RedisLeaderFeed`
+
+Initializes a new `RedisLeaderFeed`
+
+* `redis` - redis client library
+* `opts` - [`redis client options`](https://github.com/NodeRedis/node_redis#options-object-properties)
+
+
+##### RedisLeaderFeed#start(`opts:Object` [,`cb:Function`]) => `Promise<RedisLeaderFeed>`
+
+Starts the leaderfeed
+
+* `opts` - options hash
+  * `channel` - channel name
+* [`cb`] - callback, returns error as first argument or leader feed as second
+
+
+##### RedisLeaderFeed#stop([`cb:Function`]) => `Promise`
+
+Stops the leaderfeed
+
+##### RedisLeaderFeed#elect([, `id:String`] [,`cb:Function`]) => `Promise`
+
+Elects an id specified or self if no id specified
+
+##### RedisLeaderFeed#status => `StatusEnum`
+
+"started" | "starting" | "stopping" | "stopped"
+
+##### RedisLeaderFeed#pub => `Object`
+
+Redis publish client
+
+##### RedisLeaderFeed#sub => `Object`
+
+Redis subscribe client
+
+##### RedisLeaderFeed#id => `String`
+
+##### RedisLeaderFeed#isLeader => `Boolean`
 
 ---
 

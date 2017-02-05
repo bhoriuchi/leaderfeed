@@ -870,10 +870,169 @@ var MongoLeaderFeed = function (_LeaderFeed) {
   return MongoLeaderFeed;
 }(LeaderFeed);
 
+var DEFAULT_HEARTBEAT_INTERVAL$1 = 1000;
+
+var RedisLeaderFeed = function (_LeaderFeed) {
+  inherits(RedisLeaderFeed, _LeaderFeed);
+
+  function RedisLeaderFeed(driver, options) {
+    classCallCheck(this, RedisLeaderFeed);
+
+    if (!driver) throw new Error('no driver specified');
+    if (!_.isObject(options) || _.isEmpty(options)) throw new Error('no options specefied');
+
+    var _this = possibleConstructorReturn(this, (RedisLeaderFeed.__proto__ || Object.getPrototypeOf(RedisLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$1));
+
+    _this._driver = driver;
+    _this.pub = null;
+    _this.sub = null;
+    _this.channel = null;
+    _this._pubConnected = false;
+    _this._subConnected = false;
+    return _this;
+  }
+
+  /**
+   * establishes a connection
+   * @param options
+   * @param done
+   * @returns {*}
+   * @private
+   */
+
+
+  createClass(RedisLeaderFeed, [{
+    key: '_start',
+    value: function _start(options, done) {
+      var _this2 = this;
+
+      try {
+        var channel = options.channel;
+
+        if (!_.isString(channel)) return done(new Error('missing channel'));
+        this.channel = channel;
+
+        // connect the pub and sub clients
+        this.pub = this._driver.createClient(this._options);
+        this.sub = this._driver.createClient(this._options);
+
+        this.pub.once('ready', function () {
+          _this2._pubConnected = true;
+          if (_this2._pubConnected && _this2._subConnected) return done();
+        }).once('error', function (error) {
+          if (!_this2._pubConnected && !_this2._subConnected) return done(error);
+        });
+
+        this.sub.once('ready', function () {
+          _this2._pubConnected = true;
+          if (_this2._pubConnected && _this2._subConnected) return done();
+        }).once('error', function (error) {
+          if (!_this2._pubConnected && !_this2._subConnected) return done(error);
+        });
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * passthrough
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_create',
+    value: function _create(done) {
+      // since redis uses pre-created db immediately call done
+      return done();
+    }
+
+    /**
+     * elects a new leader
+     * @param id
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_elect',
+    value: function _elect(id, done) {
+      try {
+        this.pub.publish(this.channel, id);
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * sends a heartbeat
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_heartbeat',
+    value: function _heartbeat(done) {
+      try {
+        this.pub.publish(this.channel, this.id);
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * subscribes to a channel
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_subscribe',
+    value: function _subscribe(done) {
+      var _this3 = this;
+
+      try {
+        sub.on('subscribe', function (channel, count) {
+          if (channel === _this3.channel) return done();
+        }).on('message', function (channel, leader) {
+          if (channel === _this3.channel) _this3.emit(HEARTBEAT, leader);
+        });
+        this.sub.subscribe(this.channel);
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * unsubscribes from a channel
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_unsubscribe',
+    value: function _unsubscribe(done) {
+      try {
+        this.sub.unsubscribe();
+        this.sub.quit();
+        this.pub.quit();
+        return done();
+      } catch (error) {
+        return done(error);
+      }
+    }
+  }]);
+  return RedisLeaderFeed;
+}(LeaderFeed);
+
 var debug$2 = Debug('feed:rethinkdb');
 var DEFAULT_DB = 'test';
 var ID$1 = 'id';
-var DEFAULT_HEARTBEAT_INTERVAL$1 = 1000;
+var DEFAULT_HEARTBEAT_INTERVAL$2 = 1000;
 
 var RethinkLeaderFeed = function (_LeaderFeed) {
   inherits(RethinkLeaderFeed, _LeaderFeed);
@@ -893,7 +1052,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
       db = DEFAULT_DB;
     }
 
-    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$1));
+    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$2));
 
     _this.r = null;
     _this._db = db || DEFAULT_DB;
@@ -1091,6 +1250,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 var index = {
   CONST: CONST,
   MongoDB: MongoLeaderFeed,
+  Redis: RedisLeaderFeed,
   RethinkDB: RethinkLeaderFeed
 };
 
