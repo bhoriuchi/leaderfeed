@@ -1,6 +1,6 @@
 {
   "name": "leaderfeed",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Leader election for subscription/changefeed databases",
   "main": "index.js",
   "scripts": {
@@ -16,11 +16,20 @@
   "keywords": [
     "leader",
     "election",
+    "heartbeat",
+    "cluster",
+    "ha",
+    "raft",
     "subscription",
     "subscriptions",
     "changefeed",
     "changefeeds",
-    "rethinkdb"
+    "stream",
+    "streams",
+    "rethink",
+    "rethinkdb",
+    "mongo",
+    "mongodb"
   ],
   "author": "Branden Horiuchi <bhoriuchi@gmail.com>",
   "license": "MIT",

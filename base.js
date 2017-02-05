@@ -28,8 +28,9 @@ function doneFactory(callback, resolve, reject) {
 
   return function done(error, success) {
     if (error) {
+      error = error instanceof Error ? error : new Error(error);
       callback(error);
-      return reject(success);
+      return reject(error);
     }
     callback(null, success);
     return resolve(success);
@@ -44,6 +45,12 @@ function doneFactory(callback, resolve, reject) {
 // raft states
 var LEADER = 'leader';
 var FOLLOWER = 'follower';
+
+// leaderfeed status
+var STOPPED = 'stopped';
+var STOPPING = 'stopping';
+var STARTING = 'starting';
+var STARTED = 'started';
 
 // events
 var HEARTBEAT = 'heartbeat';
@@ -139,6 +146,8 @@ var LeaderFeed = function (_EventEmitter) {
 
     _this.id = hat();
     _this.state = null;
+    _this.started = false;
+    _this.status = STOPPED;
 
     _this._options = options || {};
     _this._electionTimeout = null;
@@ -187,8 +196,9 @@ var LeaderFeed = function (_EventEmitter) {
         return false;
       };
 
-      if (!_.isObject(options) || _.isEmpty(options)) throw new Error('invalid options');
-      if (!_.isFunction(callback)) throw new Error('invalid callback');
+      callback = _.isFunction(callback) ? callback : function () {
+        return false;
+      };
 
       return new Promise(function (resolve, reject) {
         var done = doneFactory(function (error) {
@@ -196,6 +206,11 @@ var LeaderFeed = function (_EventEmitter) {
         }, function () {
           return resolve(_this2);
         }, reject);
+
+        if (_this2.status === STARTING) return done(new Error('leaderfeed is currently starting'));
+        if (_this2.status === STARTED) return done(new Error('leaderfeed already started'));
+        if (!_.isObject(options) || _.isEmpty(options)) return done(new Error('invalid options'));
+        _this2.status = STARTING;
 
         // start the heartbeat listener
         _this2.on(HEARTBEAT, function (leader) {
@@ -215,6 +230,7 @@ var LeaderFeed = function (_EventEmitter) {
           debug('%s %O', SUB_ERROR, error);
           return _this2._changeState(FOLLOWER);
         }).on(SUB_STARTED, function () {
+          _this2.status = STARTED;
           return _this2._changeState(FOLLOWER);
         }).on(HEARTBEAT_ERROR, function (error) {
           debug('%s %O', HEARTBEAT_ERROR, error);
@@ -248,6 +264,47 @@ var LeaderFeed = function (_EventEmitter) {
     }
 
     /**
+     * stops the leaderfeed
+     * @param callback
+     * @returns {Promise}
+     */
+
+  }, {
+    key: 'stop',
+    value: function stop(callback) {
+      var _this3 = this;
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+
+        switch (_this3.status) {
+          case STARTING:
+            return done('leaderfeed cannot be stopped while starting');
+          case STOPPED:
+            return done('leaderfeed is already stopped');
+          case STOPPING:
+            return done('leaderfeed is currently stopping');
+          default:
+            _this3.status = STOPPING;
+            break;
+        }
+
+        _this3._clearHeartbeatInterval();
+        _this3._clearElectionTimeout();
+        _this3._unsubscribe(function (error) {
+          // on error restart the services
+          if (error) {
+            _this3.state === LEADER ? _this3._restartHeartbeatInterval() : _this3._restartElectionTimeout();
+            _this3.status = STARTED;
+            return done(error);
+          }
+          _this3.status = STOPPED;
+          return done();
+        });
+      });
+    }
+
+    /**
      * creates a db/store/table/collection if missing and createIfMissing is true
      * @param done
      * @return {*}
@@ -269,6 +326,30 @@ var LeaderFeed = function (_EventEmitter) {
     }
 
     /**
+     * elects the specified id or self if no id
+     * @param id
+     * @param callback
+     * @returns {Promise}
+     */
+
+  }, {
+    key: 'elect',
+    value: function elect(id, callback) {
+      var _this4 = this;
+
+      if (_.isFunction(id)) {
+        callback = id;
+        id = this.id;
+      }
+      id = _.isString(id) ? id : this.id;
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+        return _this4._elect(id, done);
+      });
+    }
+
+    /**
      * start subscription
      * @param done
      * @return {*}
@@ -277,19 +358,19 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'subscribe',
     value: function subscribe(done) {
-      var _this3 = this;
+      var _this5 = this;
 
       try {
         return this._subscribe(function (error) {
           if (error) {
             debug('error during subscribe %O', error);
-            _this3.emit();
+            _this5.emit();
             return done(error);
           }
 
           debug('subscribe successful');
-          _this3.emit(SUB_STARTED);
-          done(null, _this3);
+          _this5.emit(SUB_STARTED);
+          done(null, _this5);
         });
       } catch (error) {
         return done(error);
@@ -305,7 +386,7 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_changeState',
     value: function _changeState(state) {
-      var _this4 = this;
+      var _this6 = this;
 
       if (state === this.state) return false;
       debug('changed to state: %s', state);
@@ -321,10 +402,10 @@ var LeaderFeed = function (_EventEmitter) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
               debug('error sending heartbeat %O', error);
-              _this4._clearHeartbeatInterval();
-              return _this4._changeState(FOLLOWER);
+              _this6._clearHeartbeatInterval();
+              return _this6._changeState(FOLLOWER);
             }
-            _this4._restartHeartbeatInterval();
+            _this6._restartHeartbeatInterval();
           });
 
         case FOLLOWER:
@@ -354,15 +435,15 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartHeartbeatInterval',
     value: function _restartHeartbeatInterval() {
-      var _this5 = this;
+      var _this7 = this;
 
       this._clearHeartbeatInterval();
       this._heartbeatInterval = setInterval(function () {
-        return _this5._heartbeat(function (error) {
+        return _this7._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
           if (error) {
-            _this5._clearHeartbeatInterval();
-            _this5.emit(HEARTBEAT_ERROR, error);
+            _this7._clearHeartbeatInterval();
+            _this7.emit(HEARTBEAT_ERROR, error);
           }
         });
       }, this._heartbeatIntervalMs);
@@ -388,11 +469,11 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartElectionTimeout',
     value: function _restartElectionTimeout() {
-      var _this6 = this;
+      var _this8 = this;
 
       this._clearElectionTimeout();
       this._electionTimeout = setTimeout(function () {
-        return _this6._changeState(LEADER);
+        return _this8._changeState(LEADER);
       }, this.randomElectionTimeout);
     }
 
@@ -402,12 +483,38 @@ var LeaderFeed = function (_EventEmitter) {
      */
 
   }, {
-    key: '_heartbeat',
+    key: '_create',
 
 
     /************************************************
      * Methods that should be overridden
      ************************************************/
+
+    /**
+     * should create the store/table/collection if it does not exist
+     * and the createIfMissing option is set to true
+     * and then call the done callback with error or no arguments
+     * @param done
+     * @return {*}
+     * @private
+     */
+    value: function _create(done) {
+      return done();
+    }
+
+    /**
+     * should elect the id specified and callback done with error or no arguments if successful
+     * @param id
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_elect',
+    value: function _elect(id, done) {
+      return done();
+    }
 
     /**
      * should update the leader/heartbeat metadata with a timestamp
@@ -416,6 +523,9 @@ var LeaderFeed = function (_EventEmitter) {
      * @returns {*}
      * @private
      */
+
+  }, {
+    key: '_heartbeat',
     value: function _heartbeat(done) {
       return done();
     }
@@ -456,17 +566,15 @@ var LeaderFeed = function (_EventEmitter) {
     }
 
     /**
-     * should create the store/table/collection if it does not exist
-     * and the createIfMissing option is set to true
-     * and then call the done callback with error or no arguments
+     * should stop the subscription and callback done with error or no arguments if successful
      * @param done
-     * @return {*}
+     * @returns {*}
      * @private
      */
 
   }, {
-    key: '_create',
-    value: function _create(done) {
+    key: '_unsubscribe',
+    value: function _unsubscribe(done) {
       return done();
     }
   }, {

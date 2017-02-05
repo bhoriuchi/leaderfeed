@@ -7,6 +7,12 @@ export const TYPE = 'type'
 export const LEADER = 'leader'
 export const FOLLOWER = 'follower'
 
+// leaderfeed status
+export const STOPPED = 'stopped'
+export const STOPPING = 'stopping'
+export const STARTING = 'starting'
+export const STARTED = 'started'
+
 // events
 export const HEARTBEAT = 'heartbeat'
 export const HEARTBEAT_ERROR = 'heartbeat error'
@@ -22,6 +28,10 @@ export default {
   TYPE,
   LEADER,
   FOLLOWER,
+  STOPPED,
+  STOPPING,
+  STARTING,
+  STARTED,
   HEARTBEAT,
   HEARTBEAT_ERROR,
   CHANGE,

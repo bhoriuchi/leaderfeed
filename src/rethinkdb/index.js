@@ -37,6 +37,7 @@ export default class RethinkLeaderFeed extends LeaderFeed {
     this._db = db || DEFAULT_DB
     this._table = null
     this._driver = driver
+    this._cursor = null
   }
 
   /**
@@ -111,40 +112,66 @@ export default class RethinkLeaderFeed extends LeaderFeed {
   }
 
   /**
+   * puts a document
+   * @param id
+   * @param done
+   * @private
+   */
+  _put (doc, done) {
+    try {
+      this.table.insert(doc, {
+        durability: 'hard',
+        conflict: 'update'
+      })
+        .do((summary) => {
+          return summary('errors').ne(0).branch(
+            this.r.error(summary('first_error')),
+            true
+          )
+        })
+        .run(this.connection)
+        .then(() => {
+          return done()
+        }, error => {
+          return done(error)
+        })
+    } catch (error) {
+      return done(error)
+    }
+  }
+
+  /**
+   * elects a new leader
+   * @param id
+   * @param done
+   * @returns {*}
+   * @private
+   */
+  _elect (id, done) {
+    return this._put({
+      [ID]: LEADER,
+      [VALUE]: id,
+      [TIMESTAMP]: this.r.now()
+    }, done)
+  }
+
+  /**
    * sends a heartbeat
    * @param done
    * @private
    */
   _heartbeat (done) {
     debug('heartbeat update')
-    let r = this.r
-    let table = this.table
 
-    // insert a heartbeat
-    table.insert({
+    return this._put({
       [ID]: LEADER,
       [VALUE]: this.id,
-      [TIMESTAMP]: r.now()
-    }, {
-      durability: 'hard',
-      conflict: 'update'
-    })
-      .do((summary) => {
-        return summary('errors').ne(0).branch(
-          r.error(summary('first_error')),
-          true
-        )
-      })
-      .run(this.connection)
-      .then(() => {
-        return done()
-      }, error => {
-        return done(error)
-      })
+      [TIMESTAMP]: this.r.now()
+    }, done)
   }
 
   /**
-   * sets up a subscription
+   * sets up a changefeed
    * @param done
    * @returns {Promise.<TResult>}
    * @private
@@ -176,6 +203,19 @@ export default class RethinkLeaderFeed extends LeaderFeed {
         }, done)
     } catch (error) {
       done(error)
+    }
+  }
+
+  /**
+   * stops the changefeed
+   * @param done
+   * @private
+   */
+  _unsubscribe (done) {
+    try {
+      return this._cursor.close(done)
+    } catch (error) {
+      return done(error)
     }
   }
 }

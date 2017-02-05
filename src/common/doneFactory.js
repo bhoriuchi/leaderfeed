@@ -15,8 +15,9 @@ export default function doneFactory (callback, resolve, reject) {
 
   return function done (error, success) {
     if (error) {
+      error = (error instanceof Error) ? error : new Error(error)
       callback(error)
-      return reject(success)
+      return reject(error)
     }
     callback(null, success)
     return resolve(success)

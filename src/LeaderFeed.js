@@ -6,6 +6,10 @@ import hat from 'hat'
 import {
   FOLLOWER,
   LEADER,
+  STOPPED,
+  STOPPING,
+  STARTING,
+  STARTED,
   HEARTBEAT,
   HEARTBEAT_ERROR,
   NEW_STATE,
@@ -28,6 +32,8 @@ export default class LeaderFeed extends EventEmitter {
 
     this.id = hat()
     this.state = null
+    this.started = false
+    this.status = STOPPED
 
     this._options = options || {}
     this._electionTimeout = null
@@ -73,8 +79,7 @@ export default class LeaderFeed extends EventEmitter {
    * @returns {Promise}
    */
   start (options, callback = () => false) {
-    if (!_.isObject(options) || _.isEmpty(options)) throw new Error('invalid options')
-    if (!_.isFunction(callback)) throw new Error('invalid callback')
+    callback = _.isFunction(callback) ? callback : () => false
 
     return new Promise((resolve, reject) => {
       let done = doneFactory(
@@ -82,6 +87,11 @@ export default class LeaderFeed extends EventEmitter {
         () => resolve(this),
         reject
       )
+
+      if (this.status === STARTING) return done (new Error('leaderfeed is currently starting'))
+      if (this.status === STARTED) return done(new Error('leaderfeed already started'))
+      if (!_.isObject(options) || _.isEmpty(options)) return done(new Error('invalid options'))
+      this.status = STARTING
 
       // start the heartbeat listener
       this.on(HEARTBEAT, (leader) => {
@@ -105,6 +115,7 @@ export default class LeaderFeed extends EventEmitter {
           return this._changeState(FOLLOWER)
         })
         .on(SUB_STARTED, () => {
+          this.status = STARTED
           return this._changeState(FOLLOWER)
         })
         .on(HEARTBEAT_ERROR, error => {
@@ -139,6 +150,44 @@ export default class LeaderFeed extends EventEmitter {
   }
 
   /**
+   * stops the leaderfeed
+   * @param callback
+   * @returns {Promise}
+   */
+  stop (callback) {
+    return new Promise((resolve, reject) => {
+      let done = doneFactory(callback, resolve, reject)
+
+      switch (this.status) {
+        case STARTING:
+          return done('leaderfeed cannot be stopped while starting')
+        case STOPPED:
+          return done('leaderfeed is already stopped')
+        case STOPPING:
+          return done('leaderfeed is currently stopping')
+        default:
+          this.status = STOPPING
+          break
+      }
+
+      this._clearHeartbeatInterval()
+      this._clearElectionTimeout()
+      this._unsubscribe((error) => {
+        // on error restart the services
+        if (error) {
+          this.state === LEADER
+            ? this._restartHeartbeatInterval()
+            : this._restartElectionTimeout()
+          this.status = STARTED
+          return done(error)
+        }
+        this.status = STOPPED
+        return done()
+      })
+    })
+  }
+
+  /**
    * creates a db/store/table/collection if missing and createIfMissing is true
    * @param done
    * @return {*}
@@ -154,6 +203,27 @@ export default class LeaderFeed extends EventEmitter {
     } catch (error) {
       return done(error)
     }
+  }
+
+  /**
+   * elects the specified id or self if no id
+   * @param id
+   * @param callback
+   * @returns {Promise}
+   */
+  elect (id, callback) {
+    if (_.isFunction(id)) {
+      callback = id
+      id = this.id
+    }
+    id = _.isString(id)
+      ? id
+      : this.id
+
+    return new Promise((resolve, reject) => {
+      let done = doneFactory(callback, resolve, reject)
+      return this._elect(id, done)
+    })
   }
 
   /**
@@ -281,6 +351,29 @@ export default class LeaderFeed extends EventEmitter {
    ************************************************/
 
   /**
+   * should create the store/table/collection if it does not exist
+   * and the createIfMissing option is set to true
+   * and then call the done callback with error or no arguments
+   * @param done
+   * @return {*}
+   * @private
+   */
+  _create (done) {
+    return done()
+  }
+
+  /**
+   * should elect the id specified and callback done with error or no arguments if successful
+   * @param id
+   * @param done
+   * @returns {*}
+   * @private
+   */
+  _elect (id, done) {
+    return done()
+  }
+
+  /**
    * should update the leader/heartbeat metadata with a timestamp
    * and callback with error as first argument or no arguments if successful
    * @param done
@@ -321,14 +414,12 @@ export default class LeaderFeed extends EventEmitter {
   }
 
   /**
-   * should create the store/table/collection if it does not exist
-   * and the createIfMissing option is set to true
-   * and then call the done callback with error or no arguments
+   * should stop the subscription and callback done with error or no arguments if successful
    * @param done
-   * @return {*}
+   * @returns {*}
    * @private
    */
-  _create (done) {
+  _unsubscribe (done) {
     return done()
   }
 }

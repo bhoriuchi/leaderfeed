@@ -73,6 +73,18 @@ Starts the leaderfeed
   * [`connection`] - rethinkdb connection if already connected
 * [`cb`] - callback, returns error as first argument or leader feed as second
 
+##### RethinkLeaderFeed#stop([`cb:Function`]) => `Promise`
+
+Stops the leaderfeed
+
+##### RethinkLeaderFeed#elect([, `id:String`] [,`cb:Function`]) => `Promise`
+
+Elects an id specified or self if no id specified
+
+##### RethinkLeaderFeed#status => `StatusEnum`
+
+"started" | "starting" | "stopping" | "stopped"
+
 ##### RethinkLeaderFeed#r => `Driver`
 
 RethinkDB driver
@@ -133,6 +145,18 @@ Starts the leaderfeed
 * `opts` - options hash
   * `collection` - collection name
 * [`cb`] - callback, returns error as first argument or leader feed as second
+
+##### MongoLeaderFeed#stop([`cb:Function`]) => `Promise`
+
+Stops the leaderfeed
+
+##### MongoLeaderFeed#elect([, `id:String`] [,`cb:Function`]) => `Promise`
+
+Elects an id specified or self if no id specified
+
+##### MongoLeaderFeed#status => `StatusEnum`
+
+"started" | "starting" | "stopping" | "stopped"
 
 ##### MongoLeaderFeed#db => `Object`
 
@@ -195,9 +219,17 @@ Should start a subscription/changefeed/stream of changes and emit the following 
 * `change` => `change` - for non heartbeat changes, emit the change object
 * `subscribe error` => `error` - if an error is encountered in the subscription/changefeed/stream emit this event with the error to signal the node to become a follower
 
+**`_unsubscribe(done:Function)`**
+
+Should stop the subscription and callback done with error or no arguments if successful
+
 **`_start(opts:Object, done:Function)`**
 
 Should set up a connection to the backend and callback done with an error or no arguments if successful. The options object should contain information specific to making requests to the backend (i.e. the table name and/or connection object)
+
+**`_elect(id:String, done:Function)`**
+
+Should set the leader to the id value and callback done with an error or no arguments if successful
 
 ---
 

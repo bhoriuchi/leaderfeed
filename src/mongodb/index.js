@@ -51,6 +51,7 @@ export default class MongoLeaderFeed extends LeaderFeed {
       ? null
       : driver
     this._collectionName = null
+    this._stream = null
 
     // mongo capped collection create options
     this._createOpts = {
@@ -135,6 +136,39 @@ export default class MongoLeaderFeed extends LeaderFeed {
   }
 
   /**
+   * inserts a document
+   * @param doc
+   * @param done
+   * @private
+   */
+  _put (doc, done) {
+    try {
+      this.collection.insertOne(doc, error => {
+        return error
+          ? done(error)
+          : done()
+      })
+    } catch (error) {
+      return done(error)
+    }
+  }
+
+  /**
+   * elects a new leader
+   * @param id
+   * @param done
+   * @returns {*}
+   * @private
+   */
+  _elect (id, done) {
+    return this._put({
+      [TYPE]: pad(LEADER),
+      [VALUE]: pad(id),
+      [TIMESTAMP]: Date.now()
+    }, done)
+  }
+
+  /**
    * sends a heartbeat
    * @param done
    * @private
@@ -142,15 +176,11 @@ export default class MongoLeaderFeed extends LeaderFeed {
   _heartbeat (done) {
     debug('heartbeat update')
 
-    this.collection.insertOne({
+    this._put({
       [TYPE]: pad(LEADER),
       [VALUE]: pad(this.id),
       [TIMESTAMP]: Date.now()
-    }, error => {
-      return error
-        ? done(error)
-        : done()
-    })
+    }, done)
   }
 
   /**
@@ -160,23 +190,43 @@ export default class MongoLeaderFeed extends LeaderFeed {
    * @private
    */
   _subscribe (done) {
-    let stream = this.collection.find({}, {
-      tailable: true,
-      awaitdata: true
-    })
-      .stream()
+    try {
+      this._stream = this.collection.find({}, {
+        tailable: true,
+        awaitdata: true
+      })
+        .stream()
 
-    stream.on('data', (data) => {
-      let type = _.get(data, TYPE, '').trim()
-      let value = _.get(data, VALUE)
+      this._stream.on('data', (data) => {
+        let type = _.get(data, TYPE, '').trim()
+        let value = _.get(data, VALUE)
 
-      return type === LEADER
-        ? this.emit(HEARTBEAT, value)
-        : this.emit(CHANGE, data)
-    })
-    stream.on('error', (error) => {
-      debug('stream error: %O', error)
-      return this.emit(SUB_ERROR, error)
-    })
+        return type === LEADER
+          ? this.emit(HEARTBEAT, value)
+          : this.emit(CHANGE, data)
+      })
+        .on('error', (error) => {
+          debug('stream error: %O', error)
+          return this.emit(SUB_ERROR, error)
+        })
+
+      return done(null, this)
+    } catch (error) {
+      return done(error)
+    }
+  }
+
+  /**
+   * stops the changefeed
+   * @param done
+   * @private
+   */
+  _unsubscribe (done) {
+    try {
+      this._stream.destroy()
+      return done()
+    } catch (error) {
+      return done(error)
+    }
   }
 }

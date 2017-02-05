@@ -16,6 +16,12 @@ var TYPE = 'type';
 var LEADER = 'leader';
 var FOLLOWER = 'follower';
 
+// leaderfeed status
+var STOPPED = 'stopped';
+var STOPPING = 'stopping';
+var STARTING = 'starting';
+var STARTED = 'started';
+
 // events
 var HEARTBEAT = 'heartbeat';
 var HEARTBEAT_ERROR = 'heartbeat error';
@@ -31,6 +37,10 @@ var CONST = {
   TYPE: TYPE,
   LEADER: LEADER,
   FOLLOWER: FOLLOWER,
+  STOPPED: STOPPED,
+  STOPPING: STOPPING,
+  STARTING: STARTING,
+  STARTED: STARTED,
   HEARTBEAT: HEARTBEAT,
   HEARTBEAT_ERROR: HEARTBEAT_ERROR,
   CHANGE: CHANGE,
@@ -67,8 +77,9 @@ function doneFactory(callback, resolve, reject) {
 
   return function done(error, success) {
     if (error) {
+      error = error instanceof Error ? error : new Error(error);
       callback(error);
-      return reject(success);
+      return reject(error);
     }
     callback(null, success);
     return resolve(success);
@@ -173,6 +184,8 @@ var LeaderFeed = function (_EventEmitter) {
 
     _this.id = hat();
     _this.state = null;
+    _this.started = false;
+    _this.status = STOPPED;
 
     _this._options = options || {};
     _this._electionTimeout = null;
@@ -221,8 +234,9 @@ var LeaderFeed = function (_EventEmitter) {
         return false;
       };
 
-      if (!_.isObject(options) || _.isEmpty(options)) throw new Error('invalid options');
-      if (!_.isFunction(callback)) throw new Error('invalid callback');
+      callback = _.isFunction(callback) ? callback : function () {
+        return false;
+      };
 
       return new Promise(function (resolve, reject) {
         var done = doneFactory(function (error) {
@@ -230,6 +244,11 @@ var LeaderFeed = function (_EventEmitter) {
         }, function () {
           return resolve(_this2);
         }, reject);
+
+        if (_this2.status === STARTING) return done(new Error('leaderfeed is currently starting'));
+        if (_this2.status === STARTED) return done(new Error('leaderfeed already started'));
+        if (!_.isObject(options) || _.isEmpty(options)) return done(new Error('invalid options'));
+        _this2.status = STARTING;
 
         // start the heartbeat listener
         _this2.on(HEARTBEAT, function (leader) {
@@ -249,6 +268,7 @@ var LeaderFeed = function (_EventEmitter) {
           debug$1('%s %O', SUB_ERROR, error);
           return _this2._changeState(FOLLOWER);
         }).on(SUB_STARTED, function () {
+          _this2.status = STARTED;
           return _this2._changeState(FOLLOWER);
         }).on(HEARTBEAT_ERROR, function (error) {
           debug$1('%s %O', HEARTBEAT_ERROR, error);
@@ -282,6 +302,47 @@ var LeaderFeed = function (_EventEmitter) {
     }
 
     /**
+     * stops the leaderfeed
+     * @param callback
+     * @returns {Promise}
+     */
+
+  }, {
+    key: 'stop',
+    value: function stop(callback) {
+      var _this3 = this;
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+
+        switch (_this3.status) {
+          case STARTING:
+            return done('leaderfeed cannot be stopped while starting');
+          case STOPPED:
+            return done('leaderfeed is already stopped');
+          case STOPPING:
+            return done('leaderfeed is currently stopping');
+          default:
+            _this3.status = STOPPING;
+            break;
+        }
+
+        _this3._clearHeartbeatInterval();
+        _this3._clearElectionTimeout();
+        _this3._unsubscribe(function (error) {
+          // on error restart the services
+          if (error) {
+            _this3.state === LEADER ? _this3._restartHeartbeatInterval() : _this3._restartElectionTimeout();
+            _this3.status = STARTED;
+            return done(error);
+          }
+          _this3.status = STOPPED;
+          return done();
+        });
+      });
+    }
+
+    /**
      * creates a db/store/table/collection if missing and createIfMissing is true
      * @param done
      * @return {*}
@@ -303,6 +364,30 @@ var LeaderFeed = function (_EventEmitter) {
     }
 
     /**
+     * elects the specified id or self if no id
+     * @param id
+     * @param callback
+     * @returns {Promise}
+     */
+
+  }, {
+    key: 'elect',
+    value: function elect(id, callback) {
+      var _this4 = this;
+
+      if (_.isFunction(id)) {
+        callback = id;
+        id = this.id;
+      }
+      id = _.isString(id) ? id : this.id;
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+        return _this4._elect(id, done);
+      });
+    }
+
+    /**
      * start subscription
      * @param done
      * @return {*}
@@ -311,19 +396,19 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'subscribe',
     value: function subscribe(done) {
-      var _this3 = this;
+      var _this5 = this;
 
       try {
         return this._subscribe(function (error) {
           if (error) {
             debug$1('error during subscribe %O', error);
-            _this3.emit();
+            _this5.emit();
             return done(error);
           }
 
           debug$1('subscribe successful');
-          _this3.emit(SUB_STARTED);
-          done(null, _this3);
+          _this5.emit(SUB_STARTED);
+          done(null, _this5);
         });
       } catch (error) {
         return done(error);
@@ -339,7 +424,7 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_changeState',
     value: function _changeState(state) {
-      var _this4 = this;
+      var _this6 = this;
 
       if (state === this.state) return false;
       debug$1('changed to state: %s', state);
@@ -355,10 +440,10 @@ var LeaderFeed = function (_EventEmitter) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
               debug$1('error sending heartbeat %O', error);
-              _this4._clearHeartbeatInterval();
-              return _this4._changeState(FOLLOWER);
+              _this6._clearHeartbeatInterval();
+              return _this6._changeState(FOLLOWER);
             }
-            _this4._restartHeartbeatInterval();
+            _this6._restartHeartbeatInterval();
           });
 
         case FOLLOWER:
@@ -388,15 +473,15 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartHeartbeatInterval',
     value: function _restartHeartbeatInterval() {
-      var _this5 = this;
+      var _this7 = this;
 
       this._clearHeartbeatInterval();
       this._heartbeatInterval = setInterval(function () {
-        return _this5._heartbeat(function (error) {
+        return _this7._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
           if (error) {
-            _this5._clearHeartbeatInterval();
-            _this5.emit(HEARTBEAT_ERROR, error);
+            _this7._clearHeartbeatInterval();
+            _this7.emit(HEARTBEAT_ERROR, error);
           }
         });
       }, this._heartbeatIntervalMs);
@@ -422,11 +507,11 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartElectionTimeout',
     value: function _restartElectionTimeout() {
-      var _this6 = this;
+      var _this8 = this;
 
       this._clearElectionTimeout();
       this._electionTimeout = setTimeout(function () {
-        return _this6._changeState(LEADER);
+        return _this8._changeState(LEADER);
       }, this.randomElectionTimeout);
     }
 
@@ -436,12 +521,38 @@ var LeaderFeed = function (_EventEmitter) {
      */
 
   }, {
-    key: '_heartbeat',
+    key: '_create',
 
 
     /************************************************
      * Methods that should be overridden
      ************************************************/
+
+    /**
+     * should create the store/table/collection if it does not exist
+     * and the createIfMissing option is set to true
+     * and then call the done callback with error or no arguments
+     * @param done
+     * @return {*}
+     * @private
+     */
+    value: function _create(done) {
+      return done();
+    }
+
+    /**
+     * should elect the id specified and callback done with error or no arguments if successful
+     * @param id
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_elect',
+    value: function _elect(id, done) {
+      return done();
+    }
 
     /**
      * should update the leader/heartbeat metadata with a timestamp
@@ -450,6 +561,9 @@ var LeaderFeed = function (_EventEmitter) {
      * @returns {*}
      * @private
      */
+
+  }, {
+    key: '_heartbeat',
     value: function _heartbeat(done) {
       return done();
     }
@@ -490,17 +604,15 @@ var LeaderFeed = function (_EventEmitter) {
     }
 
     /**
-     * should create the store/table/collection if it does not exist
-     * and the createIfMissing option is set to true
-     * and then call the done callback with error or no arguments
+     * should stop the subscription and callback done with error or no arguments if successful
      * @param done
-     * @return {*}
+     * @returns {*}
      * @private
      */
 
   }, {
-    key: '_create',
-    value: function _create(done) {
+    key: '_unsubscribe',
+    value: function _unsubscribe(done) {
       return done();
     }
   }, {
@@ -559,6 +671,7 @@ var MongoLeaderFeed = function (_LeaderFeed) {
     _this._url = url;
     _this._driver = _this.db ? null : driver;
     _this._collectionName = null;
+    _this._stream = null;
 
     // mongo capped collection create options
     _this._createOpts = {
@@ -653,6 +766,41 @@ var MongoLeaderFeed = function (_LeaderFeed) {
     }
 
     /**
+     * inserts a document
+     * @param doc
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_put',
+    value: function _put(doc, done) {
+      try {
+        this.collection.insertOne(doc, function (error) {
+          return error ? done(error) : done();
+        });
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * elects a new leader
+     * @param id
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_elect',
+    value: function _elect(id, done) {
+      var _put2;
+
+      return this._put((_put2 = {}, defineProperty(_put2, TYPE, pad(LEADER)), defineProperty(_put2, VALUE, pad(id)), defineProperty(_put2, TIMESTAMP, Date.now()), _put2), done);
+    }
+
+    /**
      * sends a heartbeat
      * @param done
      * @private
@@ -661,13 +809,11 @@ var MongoLeaderFeed = function (_LeaderFeed) {
   }, {
     key: '_heartbeat',
     value: function _heartbeat(done) {
-      var _collection$insertOne2;
+      var _put3;
 
       debug('heartbeat update');
 
-      this.collection.insertOne((_collection$insertOne2 = {}, defineProperty(_collection$insertOne2, TYPE, pad(LEADER)), defineProperty(_collection$insertOne2, VALUE, pad(this.id)), defineProperty(_collection$insertOne2, TIMESTAMP, Date.now()), _collection$insertOne2), function (error) {
-        return error ? done(error) : done();
-      });
+      this._put((_put3 = {}, defineProperty(_put3, TYPE, pad(LEADER)), defineProperty(_put3, VALUE, pad(this.id)), defineProperty(_put3, TIMESTAMP, Date.now()), _put3), done);
     }
 
     /**
@@ -682,21 +828,43 @@ var MongoLeaderFeed = function (_LeaderFeed) {
     value: function _subscribe(done) {
       var _this4 = this;
 
-      var stream = this.collection.find({}, {
-        tailable: true,
-        awaitdata: true
-      }).stream();
+      try {
+        this._stream = this.collection.find({}, {
+          tailable: true,
+          awaitdata: true
+        }).stream();
 
-      stream.on('data', function (data) {
-        var type = _.get(data, TYPE, '').trim();
-        var value = _.get(data, VALUE);
+        this._stream.on('data', function (data) {
+          var type = _.get(data, TYPE, '').trim();
+          var value = _.get(data, VALUE);
 
-        return type === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, data);
-      });
-      stream.on('error', function (error) {
-        debug('stream error: %O', error);
-        return _this4.emit(SUB_ERROR, error);
-      });
+          return type === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, data);
+        }).on('error', function (error) {
+          debug('stream error: %O', error);
+          return _this4.emit(SUB_ERROR, error);
+        });
+
+        return done(null, this);
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * stops the changefeed
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_unsubscribe',
+    value: function _unsubscribe(done) {
+      try {
+        this._stream.destroy();
+        return done();
+      } catch (error) {
+        return done(error);
+      }
     }
   }]);
   return MongoLeaderFeed;
@@ -731,6 +899,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
     _this._db = db || DEFAULT_DB;
     _this._table = null;
     _this._driver = driver;
+    _this._cursor = null;
     return _this;
   }
 
@@ -804,6 +973,50 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
     }
 
     /**
+     * puts a document
+     * @param id
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_put',
+    value: function _put(doc, done) {
+      var _this4 = this;
+
+      try {
+        this.table.insert(doc, {
+          durability: 'hard',
+          conflict: 'update'
+        }).do(function (summary) {
+          return summary('errors').ne(0).branch(_this4.r.error(summary('first_error')), true);
+        }).run(this.connection).then(function () {
+          return done();
+        }, function (error) {
+          return done(error);
+        });
+      } catch (error) {
+        return done(error);
+      }
+    }
+
+    /**
+     * elects a new leader
+     * @param id
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_elect',
+    value: function _elect(id, done) {
+      var _put2;
+
+      return this._put((_put2 = {}, defineProperty(_put2, ID$1, LEADER), defineProperty(_put2, VALUE, id), defineProperty(_put2, TIMESTAMP, this.r.now()), _put2), done);
+    }
+
+    /**
      * sends a heartbeat
      * @param done
      * @private
@@ -812,27 +1025,15 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
   }, {
     key: '_heartbeat',
     value: function _heartbeat(done) {
-      var _table$insert;
+      var _put3;
 
       debug$2('heartbeat update');
-      var r = this.r;
-      var table = this.table;
 
-      // insert a heartbeat
-      table.insert((_table$insert = {}, defineProperty(_table$insert, ID$1, LEADER), defineProperty(_table$insert, VALUE, this.id), defineProperty(_table$insert, TIMESTAMP, r.now()), _table$insert), {
-        durability: 'hard',
-        conflict: 'update'
-      }).do(function (summary) {
-        return summary('errors').ne(0).branch(r.error(summary('first_error')), true);
-      }).run(this.connection).then(function () {
-        return done();
-      }, function (error) {
-        return done(error);
-      });
+      return this._put((_put3 = {}, defineProperty(_put3, ID$1, LEADER), defineProperty(_put3, VALUE, this.id), defineProperty(_put3, TIMESTAMP, this.r.now()), _put3), done);
     }
 
     /**
-     * sets up a subscription
+     * sets up a changefeed
      * @param done
      * @returns {Promise.<TResult>}
      * @private
@@ -841,7 +1042,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
   }, {
     key: '_subscribe',
     value: function _subscribe(done) {
-      var _this4 = this;
+      var _this5 = this;
 
       try {
         return this.table.changes().run(this.connection).then(function (cursor) {
@@ -850,7 +1051,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
           cursor.each(function (error, change) {
             if (error) {
               debug$2('changefeed error: %O', error);
-              return _this4.emit(SUB_ERROR, error);
+              return _this5.emit(SUB_ERROR, error);
             }
 
             var data = _.get(change, 'new_val');
@@ -858,13 +1059,29 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
             var value = _.get(data, VALUE);
 
             // emit the appropriate event
-            return id === LEADER ? _this4.emit(HEARTBEAT, value) : _this4.emit(CHANGE, change);
+            return id === LEADER ? _this5.emit(HEARTBEAT, value) : _this5.emit(CHANGE, change);
           });
 
-          return done(null, _this4);
+          return done(null, _this5);
         }, done);
       } catch (error) {
         done(error);
+      }
+    }
+
+    /**
+     * stops the changefeed
+     * @param done
+     * @private
+     */
+
+  }, {
+    key: '_unsubscribe',
+    value: function _unsubscribe(done) {
+      try {
+        return this._cursor.close(done);
+      } catch (error) {
+        return done(error);
       }
     }
   }]);
