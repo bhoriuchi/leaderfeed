@@ -1,4 +1,5 @@
 import _ from 'lodash'
+import ChangeFeed from './changefeed'
 import Debug from 'debug'
 
 import {
@@ -31,7 +32,7 @@ export default class RethinkLeaderFeed extends LeaderFeed {
       db = DEFAULT_DB
     }
 
-    super(options, DEFAULT_HEARTBEAT_INTERVAL)
+    super(options, DEFAULT_HEARTBEAT_INTERVAL, ChangeFeed)
 
     this.r = null
     this._db = db || DEFAULT_DB

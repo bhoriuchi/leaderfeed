@@ -1,4 +1,5 @@
 import _ from 'lodash'
+import ChangeFeed from './changefeed'
 import Debug from 'debug'
 
 import {
@@ -18,7 +19,7 @@ export default class RedisLeaderFeed extends LeaderFeed {
   constructor (driver, options) {
     if (!driver) throw new Error('no driver specified')
     if (!_.isObject(options) || _.isEmpty(options)) throw new Error('no options specefied')
-    super(options, DEFAULT_HEARTBEAT_INTERVAL)
+    super(options, DEFAULT_HEARTBEAT_INTERVAL, ChangeFeed)
 
     this._driver = driver
     this.pub = null

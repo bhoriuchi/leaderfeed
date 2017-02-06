@@ -50,12 +50,6 @@ var CONST = {
   SUB_STARTED: SUB_STARTED
 };
 
-function pad(str) {
-  var len = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 32;
-
-  return String(new Array(len + 1).join(' ') + str).slice(-1 * Math.abs(len));
-}
-
 /**
  * create a new done handler
  * @private
@@ -85,6 +79,22 @@ function doneFactory(callback, resolve, reject) {
     return resolve(success);
   };
 }
+
+var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) {
+  return typeof obj;
+} : function (obj) {
+  return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj;
+};
+
+
+
+
+
+
+
+
+
+
 
 var classCallCheck = function (instance, Constructor) {
   if (!(instance instanceof Constructor)) {
@@ -165,7 +175,323 @@ var possibleConstructorReturn = function (self, call) {
   return call && (typeof call === "object" || typeof call === "function") ? call : self;
 };
 
-var debug$1 = Debug('feed:base');
+var ChangeFeed$1 = function (_EventEmitter) {
+  inherits(ChangeFeed, _EventEmitter);
+
+  function ChangeFeed(leaderfeed, collection) {
+    classCallCheck(this, ChangeFeed);
+
+    var _this = possibleConstructorReturn(this, (ChangeFeed.__proto__ || Object.getPrototypeOf(ChangeFeed)).call(this));
+
+    _this._leaderfeed = leaderfeed;
+    _this._collection = collection;
+    return _this;
+  }
+
+  createClass(ChangeFeed, [{
+    key: 'changes',
+    value: function changes(done) {
+      done();
+      return Promise.resolve();
+    }
+  }]);
+  return ChangeFeed;
+}(EventEmitter);
+
+function pad(str) {
+  var len = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 32;
+
+  return String(new Array(len + 1).join(' ') + str).slice(-1 * Math.abs(len));
+}
+
+var debug$1 = Debug('feed:mongodb:changes');
+var logCollection = 'changefeed';
+var DEFAULT_COLLECTION_SIZE$1 = 100000;
+var DEFAULT_MAX_DOCS$1 = 20;
+var INIT = 'init';
+var OLD_VAL = 'old_val';
+var DOC_MAX_CHARS = 5000;
+var COL_NAME_MAX_CHARS = 50;
+
+var MongoChangeFeed = function (_ChangeFeed) {
+  inherits(MongoChangeFeed, _ChangeFeed);
+
+  function MongoChangeFeed(leaderfeed, collection) {
+    classCallCheck(this, MongoChangeFeed);
+
+    var _this = possibleConstructorReturn(this, (MongoChangeFeed.__proto__ || Object.getPrototypeOf(MongoChangeFeed)).call(this, leaderfeed, collection));
+
+    _this._driver = leaderfeed._driver;
+    _this._url = leaderfeed._url;
+    _this._options = leaderfeed._options;
+    _this.db = leaderfeed.db;
+    _this.log = null;
+
+    // mongo capped collection create options
+    _this._createOpts = {
+      capped: true,
+      size: _this._options.collectionSizeBytes || DEFAULT_COLLECTION_SIZE$1,
+      max: _this._options.collectionMaxDocs || DEFAULT_MAX_DOCS$1
+    };
+
+    _this._docMaxChars = _this._options.docMaxChars || DOC_MAX_CHARS;
+
+    // remove the size options
+    delete _this._options.collectionSizeBytes;
+    delete _this._options.collectionMaxDocs;
+    delete _this._options.docMaxChars;
+    return _this;
+  }
+
+  createClass(MongoChangeFeed, [{
+    key: 'changes',
+    value: function changes(done) {
+      var _this2 = this;
+
+      return this._connect(function (error) {
+        if (error) return done(error);
+
+        return _this2._createLog(function (error, log) {
+          if (error) return done(error);
+          _this2.log = log;
+
+          return _this2.db.collection(_this2._collection, function (error, collection) {
+            if (error) return done(error);
+            _this2.collection = collection;
+
+            return _this2._subscribe(function (error) {
+              if (error) {
+                debug$1('subscribe error %O', error);
+                return done(error);
+              }
+              return done(null, _this2);
+            });
+          });
+        });
+      });
+    }
+
+    /**
+     * connect to the database
+     * @param done
+     * @returns {*}
+     * @private
+     */
+
+  }, {
+    key: '_connect',
+    value: function _connect(done) {
+      var _this3 = this;
+
+      try {
+        // if the db is already connected we are done
+        if (this.db) return done();
+
+        // otherwise connect it
+        return this._driver.connect(this._url, this._options, function (error, db) {
+          if (error) return done(error);
+          _this3.db = db;
+          return done();
+        });
+      } catch (error) {
+        debug$1('error in _start %O', error);
+        return done(error);
+      }
+    }
+  }, {
+    key: '_appendLog',
+    value: function _appendLog(type, id, old_val, callback) {
+      var _this4 = this;
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+        try {
+          var _this4$log$insertOne;
+
+          return _this4.log.insertOne((_this4$log$insertOne = {}, defineProperty(_this4$log$insertOne, TYPE, pad(type)), defineProperty(_this4$log$insertOne, 'collection', pad(_this4._collection, COL_NAME_MAX_CHARS)), defineProperty(_this4$log$insertOne, VALUE, pad(id)), defineProperty(_this4$log$insertOne, TIMESTAMP, Date.now()), defineProperty(_this4$log$insertOne, OLD_VAL, pad(JSON.stringify(old_val), _this4._docMaxChars)), _this4$log$insertOne), function (error) {
+            if (error) debug$1('appendLog error %O', error);
+            return error ? done(error) : done();
+          });
+        } catch (error) {
+          debug$1('append error %O', error);
+          return done(error);
+        }
+      });
+    }
+  }, {
+    key: '_createLog',
+    value: function _createLog(done) {
+      var _this5 = this;
+
+      try {
+        return this.db.listCollections({ name: logCollection }).toArray(function (error, collections) {
+          if (error) return done(error);
+
+          // if the collection exists, get it and return done
+          if (collections.length) {
+            return _this5.db.collection(logCollection, function (error, collection) {
+              if (error) return done(error);
+              return done(null, collection);
+            });
+          }
+
+          // if the collection doesnt exist, create it and add 1 record
+          return _this5.db.createCollection(logCollection, _this5._createOpts, function (error, collection) {
+            var _collection$insertOne;
+
+            if (error) return done(error);
+
+            return collection.insertOne((_collection$insertOne = {}, defineProperty(_collection$insertOne, TYPE, pad(INIT)), defineProperty(_collection$insertOne, 'collection', pad(_this5._collection, COL_NAME_MAX_CHARS)), defineProperty(_collection$insertOne, VALUE, pad(INIT)), defineProperty(_collection$insertOne, TIMESTAMP, Date.now()), defineProperty(_collection$insertOne, OLD_VAL, pad(INIT, _this5._docMaxChars)), _collection$insertOne), function (error) {
+              if (error) return done(error);
+              return done(null, collection);
+            });
+          });
+        });
+      } catch (error) {
+        return done(error);
+      }
+    }
+  }, {
+    key: '_subscribe',
+    value: function _subscribe(done) {
+      var _this6 = this;
+
+      var wait = true;
+      var skip = null;
+
+      try {
+        this._stream = this.log.find({}, {
+          tailable: true,
+          awaitdata: true
+        }).stream();
+
+        this._stream.on('data', function (data) {
+          // skip the inital data until there has been no data for 500ms
+          if (skip) clearTimeout(skip);
+          if (wait) {
+            skip = setTimeout(function () {
+              wait = false;
+            }, 500);
+            return true;
+          }
+
+          try {
+            var _ret = function () {
+              var name = _.get(data, 'collection').trim();
+
+              // filter old records
+              if (name !== _this6._collection) return {
+                  v: true
+                };
+
+              var type = _.get(data, TYPE, '').trim();
+              var value = _.get(data, VALUE).trim();
+              var old_val = JSON.parse(_.get(data, 'old_val').trim());
+
+              if (type.match(/delete/i)) {
+                _this6.emit('change', { old_val: old_val, new_val: null });
+              } else {
+                _this6.collection.findOne({ _id: _this6._driver.ObjectId(value) }, function (error, result) {
+                  if (error) return debug$1('find error %O', error);
+                  _this6.emit('change', { old_val: old_val, new_val: result });
+                });
+              }
+            }();
+
+            if ((typeof _ret === 'undefined' ? 'undefined' : _typeof(_ret)) === "object") return _ret.v;
+          } catch (error) {
+            debug$1('stream data error: %O', error);
+          }
+        }).on('error', function (error) {
+          debug$1('stream error: %O', error);
+        });
+
+        return done(null, this);
+      } catch (error) {
+        return done(error);
+      }
+    }
+  }, {
+    key: 'insertOne',
+    value: function insertOne(doc, options, callback) {
+      var _this7 = this;
+
+      if (_.isFunction(options)) {
+        callback = options;
+        options = {};
+      }
+      callback = _.isFunction(callback) ? callback : function () {
+        return false;
+      };
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+
+        return _this7.collection.insertOne(doc, options, function (error, result) {
+          if (error) return done(error);
+          if (!result) return done(null, result);
+
+          _this7._appendLog('insertOne', result.insertedId, null, function (error) {
+            if (error) debug$1('insertOne error: %O', error);
+            return done(null, result);
+          });
+        });
+      });
+    }
+  }, {
+    key: 'insertMany',
+    value: function insertMany(docs, options, callback) {
+      var _this8 = this;
+
+      if (_.isFunction(options)) {
+        callback = options;
+        options = {};
+      }
+      callback = _.isFunction(callback) ? callback : function () {
+        return false;
+      };
+
+      return new Promise(function (resolve, reject) {
+        var done = doneFactory(callback, resolve, reject);
+
+        return _this8.collection.insertMany(docs, options, function (error, result) {
+          if (error) return done(error);
+          if (!result) return done(null, result);
+
+          return Promise.all(_.map(result.insertedIds, function (id) {
+            return _this8._appendLog('insertOne', id, null);
+          })).then(function () {
+            return done(null, result);
+          }, function (error) {
+            debug$1('insertMany error: %O', error);
+            return done(null, result);
+          });
+        });
+      });
+    }
+  }, {
+    key: 'updateOne',
+    value: function updateOne() {}
+  }, {
+    key: 'updateMany',
+    value: function updateMany() {}
+  }, {
+    key: 'findOneAndUpdate',
+    value: function findOneAndUpdate() {}
+  }, {
+    key: 'deleteOne',
+    value: function deleteOne() {}
+  }, {
+    key: 'deleteMany',
+    value: function deleteMany() {}
+  }, {
+    key: 'findOneAndDelete',
+    value: function findOneAndDelete() {}
+  }]);
+  return MongoChangeFeed;
+}(ChangeFeed$1);
+
+var debug$2 = Debug('feed:base');
 
 var LeaderFeed = function (_EventEmitter) {
   inherits(LeaderFeed, _EventEmitter);
@@ -175,17 +501,18 @@ var LeaderFeed = function (_EventEmitter) {
    * @param options
    * @param DEFAULT_HEARTBEAT_INTERVAL
    */
-  function LeaderFeed(options, DEFAULT_HEARTBEAT_INTERVAL) {
+  function LeaderFeed(options, DEFAULT_HEARTBEAT_INTERVAL, ChangeFeed) {
     classCallCheck(this, LeaderFeed);
 
     var _this = possibleConstructorReturn(this, (LeaderFeed.__proto__ || Object.getPrototypeOf(LeaderFeed)).call(this));
 
-    debug$1('initializing leader feed');
+    debug$2('initializing leader feed');
 
     _this.id = hat();
     _this.state = null;
     _this.started = false;
     _this.status = STOPPED;
+    _this.ChangeFeed = ChangeFeed;
 
     _this._options = options || {};
     _this._electionTimeout = null;
@@ -218,16 +545,15 @@ var LeaderFeed = function (_EventEmitter) {
   }
 
   /**
-   * starts the leaderfeed and subscription
+   * creates a new changefeed
    * @param options
    * @param callback
-   * @returns {Promise}
    */
 
 
   createClass(LeaderFeed, [{
-    key: 'start',
-    value: function start(options) {
+    key: 'changes',
+    value: function changes(collection) {
       var _this2 = this;
 
       var callback = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : function () {
@@ -239,63 +565,95 @@ var LeaderFeed = function (_EventEmitter) {
       };
 
       return new Promise(function (resolve, reject) {
+        return new _this2.ChangeFeed(_this2, collection).changes(function (error, changefeed) {
+          if (error) {
+            callback(error);
+            return reject(error);
+          }
+          callback(null, changefeed);
+          return resolve(changefeed);
+        });
+      });
+    }
+
+    /**
+     * starts the leaderfeed and subscription
+     * @param options
+     * @param callback
+     * @returns {Promise}
+     */
+
+  }, {
+    key: 'start',
+    value: function start(options) {
+      var _this3 = this;
+
+      var callback = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : function () {
+        return false;
+      };
+
+      callback = _.isFunction(callback) ? callback : function () {
+        return false;
+      };
+
+      return new Promise(function (resolve, reject) {
         var done = doneFactory(function (error) {
-          return error ? callback(error) : callback(null, _this2);
+          return error ? callback(error) : callback(null, _this3);
         }, function () {
-          return resolve(_this2);
+          return resolve(_this3);
         }, reject);
 
-        if (_this2.status === STARTING) return done(new Error('leaderfeed is currently starting'));
-        if (_this2.status === STARTED) return done(new Error('leaderfeed already started'));
+        if (_this3.status === STARTING) return done(new Error('leaderfeed is currently starting'));
+        if (_this3.status === STARTED) return done(new Error('leaderfeed already started'));
         if (!_.isObject(options) || _.isEmpty(options)) return done(new Error('invalid options'));
-        _this2.status = STARTING;
+        _this3.status = STARTING;
 
         // start the heartbeat listener
-        _this2.on(HEARTBEAT, function (leader) {
-          if (leader !== _this2.id) debug$1('heartbeat from %s', leader);
+        _this3.on(HEARTBEAT, function (leader) {
+          if (leader !== _this3.id) debug$2('heartbeat from %s', leader);
 
           // check if a new leader has been elected
-          if (_this2.leader && _this2.leader !== leader) _this2.emit(NEW_LEADER, leader);
-          _this2.leader = leader;
+          if (_this3.leader && _this3.leader !== leader) _this3.emit(NEW_LEADER, leader);
+          _this3.leader = leader;
 
           // if leader, do not time out self, otherwise restart the timeout
-          _this2.leader === _this2.id ? _this2._clearElectionTimeout() : _this2._restartElectionTimeout();
+          _this3.leader === _this3.id ? _this3._clearElectionTimeout() : _this3._restartElectionTimeout();
 
           // if the the node thinks it is the leader but the heartbeat
           // says otherwise, change to follower
-          if (_this2.state === LEADER && leader !== _this2.id) return _this2._changeState(FOLLOWER);
+          if (_this3.state === LEADER && leader !== _this3.id) return _this3._changeState(FOLLOWER);
         }).on(SUB_ERROR, function (error) {
-          debug$1('%s %O', SUB_ERROR, error);
-          return _this2._changeState(FOLLOWER);
+          debug$2('%s %O', SUB_ERROR, error);
+          return _this3._changeState(FOLLOWER);
         }).on(SUB_STARTED, function () {
-          _this2.status = STARTED;
-          return _this2._changeState(FOLLOWER);
+          _this3.status = STARTED;
+          return _this3._changeState(FOLLOWER);
         }).on(HEARTBEAT_ERROR, function (error) {
-          debug$1('%s %O', HEARTBEAT_ERROR, error);
-          return _this2._changeState(FOLLOWER);
+          debug$2('%s %O', HEARTBEAT_ERROR, error);
+          return _this3._changeState(FOLLOWER);
         });
 
         // if create successful, attempt to start
-        return _this2._start(options, function (error) {
+        return _this3._start(options, function (error) {
           if (error) {
-            debug$1('error during start %O', error);
+            debug$2('error during start %O', error);
             return done(error);
           }
 
-          debug$1('_start successful');
+          debug$2('_start successful');
 
           // attempt to create
-          return _this2.create(function (error) {
+          return _this3.create(function (error) {
             if (error) {
-              debug$1('error during create %O', error);
+              debug$2('error during create %O', error);
               return done(error);
             }
 
-            debug$1('create successful');
+            debug$2('create successful');
 
             // if start and create are successful, attempt to subscribe
-            debug$1('starting feed');
-            return _this2.subscribe(done);
+            debug$2('starting feed');
+            return _this3.subscribe(done);
           });
         });
       });
@@ -310,12 +668,12 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'stop',
     value: function stop(callback) {
-      var _this3 = this;
+      var _this4 = this;
 
       return new Promise(function (resolve, reject) {
         var done = doneFactory(callback, resolve, reject);
 
-        switch (_this3.status) {
+        switch (_this4.status) {
           case STARTING:
             return done('leaderfeed cannot be stopped while starting');
           case STOPPED:
@@ -323,20 +681,20 @@ var LeaderFeed = function (_EventEmitter) {
           case STOPPING:
             return done('leaderfeed is currently stopping');
           default:
-            _this3.status = STOPPING;
+            _this4.status = STOPPING;
             break;
         }
 
-        _this3._clearHeartbeatInterval();
-        _this3._clearElectionTimeout();
-        _this3._unsubscribe(function (error) {
+        _this4._clearHeartbeatInterval();
+        _this4._clearElectionTimeout();
+        _this4._unsubscribe(function (error) {
           // on error restart the services
           if (error) {
-            _this3.state === LEADER ? _this3._restartHeartbeatInterval() : _this3._restartElectionTimeout();
-            _this3.status = STARTED;
+            _this4.state === LEADER ? _this4._restartHeartbeatInterval() : _this4._restartElectionTimeout();
+            _this4.status = STARTED;
             return done(error);
           }
-          _this3.status = STOPPED;
+          _this4.status = STOPPED;
           return done();
         });
       });
@@ -373,7 +731,7 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'elect',
     value: function elect(id, callback) {
-      var _this4 = this;
+      var _this5 = this;
 
       if (_.isFunction(id)) {
         callback = id;
@@ -383,7 +741,7 @@ var LeaderFeed = function (_EventEmitter) {
 
       return new Promise(function (resolve, reject) {
         var done = doneFactory(callback, resolve, reject);
-        return _this4._elect(id, done);
+        return _this5._elect(id, done);
       });
     }
 
@@ -396,19 +754,19 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'subscribe',
     value: function subscribe(done) {
-      var _this5 = this;
+      var _this6 = this;
 
       try {
         return this._subscribe(function (error) {
           if (error) {
-            debug$1('error during subscribe %O', error);
-            _this5.emit();
+            debug$2('error during subscribe %O', error);
+            _this6.emit();
             return done(error);
           }
 
-          debug$1('subscribe successful');
-          _this5.emit(SUB_STARTED);
-          done(null, _this5);
+          debug$2('subscribe successful');
+          _this6.emit(SUB_STARTED);
+          done(null, _this6);
         });
       } catch (error) {
         return done(error);
@@ -424,10 +782,10 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_changeState',
     value: function _changeState(state) {
-      var _this6 = this;
+      var _this7 = this;
 
       if (state === this.state) return false;
-      debug$1('changed to state: %s', state);
+      debug$2('changed to state: %s', state);
       this.emit(NEW_STATE, state);
 
       switch (state) {
@@ -439,11 +797,11 @@ var LeaderFeed = function (_EventEmitter) {
           return this._heartbeat(function (error) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
-              debug$1('error sending heartbeat %O', error);
-              _this6._clearHeartbeatInterval();
-              return _this6._changeState(FOLLOWER);
+              debug$2('error sending heartbeat %O', error);
+              _this7._clearHeartbeatInterval();
+              return _this7._changeState(FOLLOWER);
             }
-            _this6._restartHeartbeatInterval();
+            _this7._restartHeartbeatInterval();
           });
 
         case FOLLOWER:
@@ -473,15 +831,15 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartHeartbeatInterval',
     value: function _restartHeartbeatInterval() {
-      var _this7 = this;
+      var _this8 = this;
 
       this._clearHeartbeatInterval();
       this._heartbeatInterval = setInterval(function () {
-        return _this7._heartbeat(function (error) {
+        return _this8._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
           if (error) {
-            _this7._clearHeartbeatInterval();
-            _this7.emit(HEARTBEAT_ERROR, error);
+            _this8._clearHeartbeatInterval();
+            _this8.emit(HEARTBEAT_ERROR, error);
           }
         });
       }, this._heartbeatIntervalMs);
@@ -507,11 +865,11 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartElectionTimeout',
     value: function _restartElectionTimeout() {
-      var _this8 = this;
+      var _this9 = this;
 
       this._clearElectionTimeout();
       this._electionTimeout = setTimeout(function () {
-        return _this8._changeState(LEADER);
+        return _this9._changeState(LEADER);
       }, this.randomElectionTimeout);
     }
 
@@ -659,9 +1017,9 @@ var MongoLeaderFeed = function (_LeaderFeed) {
     }
 
     // check if the driver is a db or driver
-    var _this = possibleConstructorReturn(this, (MongoLeaderFeed.__proto__ || Object.getPrototypeOf(MongoLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL));
+    var _this = possibleConstructorReturn(this, (MongoLeaderFeed.__proto__ || Object.getPrototypeOf(MongoLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL, MongoChangeFeed));
 
-    _this.db = _.isObject(driver) && !_.isFunction(driver.connect) ? driver : null;
+    _this.db = _.isObject(driver) && !_.isFunction(_.get(driver, 'MongoClient.connect')) ? driver : null;
 
     if (!driver && !_this.db) throw new Error('no driver specified');
     if (!_.isString(url) && !_this.db) throw new Error('no url specified');
@@ -712,7 +1070,7 @@ var MongoLeaderFeed = function (_LeaderFeed) {
         if (this.db) return done();
 
         // otherwise connect it
-        return this._driver.connect(this._url, this._options, function (error, db) {
+        return this._driver.MongoClient.connect(this._url, this._options, function (error, db) {
           if (error) return done(error);
           _this2.db = db;
           return done();
@@ -870,6 +1228,23 @@ var MongoLeaderFeed = function (_LeaderFeed) {
   return MongoLeaderFeed;
 }(LeaderFeed);
 
+var RedisChangeFeed = function (_ChangeFeed) {
+  inherits(RedisChangeFeed, _ChangeFeed);
+
+  function RedisChangeFeed(leaderfeed, collection) {
+    classCallCheck(this, RedisChangeFeed);
+    return possibleConstructorReturn(this, (RedisChangeFeed.__proto__ || Object.getPrototypeOf(RedisChangeFeed)).call(this, leaderfeed, collection));
+  }
+
+  createClass(RedisChangeFeed, [{
+    key: 'changes',
+    value: function changes(done) {
+      return done();
+    }
+  }]);
+  return RedisChangeFeed;
+}(ChangeFeed$1);
+
 var DEFAULT_HEARTBEAT_INTERVAL$1 = 1000;
 
 var RedisLeaderFeed = function (_LeaderFeed) {
@@ -881,7 +1256,7 @@ var RedisLeaderFeed = function (_LeaderFeed) {
     if (!driver) throw new Error('no driver specified');
     if (!_.isObject(options) || _.isEmpty(options)) throw new Error('no options specefied');
 
-    var _this = possibleConstructorReturn(this, (RedisLeaderFeed.__proto__ || Object.getPrototypeOf(RedisLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$1));
+    var _this = possibleConstructorReturn(this, (RedisLeaderFeed.__proto__ || Object.getPrototypeOf(RedisLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$1, RedisChangeFeed));
 
     _this._driver = driver;
     _this.pub = null;
@@ -1029,7 +1404,24 @@ var RedisLeaderFeed = function (_LeaderFeed) {
   return RedisLeaderFeed;
 }(LeaderFeed);
 
-var debug$2 = Debug('feed:rethinkdb');
+var RethinkChangeFeed = function (_ChangeFeed) {
+  inherits(RethinkChangeFeed, _ChangeFeed);
+
+  function RethinkChangeFeed(leaderfeed, collection) {
+    classCallCheck(this, RethinkChangeFeed);
+    return possibleConstructorReturn(this, (RethinkChangeFeed.__proto__ || Object.getPrototypeOf(RethinkChangeFeed)).call(this, leaderfeed, collection));
+  }
+
+  createClass(RethinkChangeFeed, [{
+    key: 'changes',
+    value: function changes(done) {
+      return done();
+    }
+  }]);
+  return RethinkChangeFeed;
+}(ChangeFeed$1);
+
+var debug$3 = Debug('feed:rethinkdb');
 var DEFAULT_DB = 'test';
 var ID$1 = 'id';
 var DEFAULT_HEARTBEAT_INTERVAL$2 = 1000;
@@ -1052,7 +1444,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
       db = DEFAULT_DB;
     }
 
-    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$2));
+    var _this = possibleConstructorReturn(this, (RethinkLeaderFeed.__proto__ || Object.getPrototypeOf(RethinkLeaderFeed)).call(this, options, DEFAULT_HEARTBEAT_INTERVAL$2, RethinkChangeFeed));
 
     _this.r = null;
     _this._db = db || DEFAULT_DB;
@@ -1186,7 +1578,7 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
     value: function _heartbeat(done) {
       var _put3;
 
-      debug$2('heartbeat update');
+      debug$3('heartbeat update');
 
       return this._put((_put3 = {}, defineProperty(_put3, ID$1, LEADER), defineProperty(_put3, VALUE, this.id), defineProperty(_put3, TIMESTAMP, this.r.now()), _put3), done);
     }
@@ -1205,11 +1597,11 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 
       try {
         return this.table.changes().run(this.connection).then(function (cursor) {
-          debug$2('changefeed started');
+          debug$3('changefeed started');
 
           cursor.each(function (error, change) {
             if (error) {
-              debug$2('changefeed error: %O', error);
+              debug$3('changefeed error: %O', error);
               return _this5.emit(SUB_ERROR, error);
             }
 

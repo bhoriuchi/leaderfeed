@@ -26,7 +26,7 @@ export default class LeaderFeed extends EventEmitter {
    * @param options
    * @param DEFAULT_HEARTBEAT_INTERVAL
    */
-  constructor (options, DEFAULT_HEARTBEAT_INTERVAL) {
+  constructor (options, DEFAULT_HEARTBEAT_INTERVAL, ChangeFeed) {
     super()
     debug('initializing leader feed')
 
@@ -34,6 +34,7 @@ export default class LeaderFeed extends EventEmitter {
     this.state = null
     this.started = false
     this.status = STOPPED
+    this.ChangeFeed = ChangeFeed
 
     this._options = options || {}
     this._electionTimeout = null
@@ -70,6 +71,26 @@ export default class LeaderFeed extends EventEmitter {
     this._electionTimeoutMaxMs = (max && max >= (this._electionTimeoutMinMs * 2))
       ? max
       : this._electionTimeoutMinMs * 2
+  }
+
+  /**
+   * creates a new changefeed
+   * @param options
+   * @param callback
+   */
+  changes (collection, callback = () => false) {
+    callback = _.isFunction(callback) ? callback : () => false
+
+    return new Promise((resolve, reject) => {
+      return new this.ChangeFeed(this, collection).changes((error, changefeed) => {
+        if (error) {
+          callback(error)
+          return reject(error)
+        }
+        callback(null, changefeed)
+        return resolve(changefeed)
+      })
+    })
   }
 
   /**

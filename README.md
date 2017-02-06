@@ -159,11 +159,11 @@ Redis subscribe client
 
 MongoDB specifc API. Please note that MongoDB uses capped collections and tailable cursors for streaming queries. Because of the limitations on capped collections it is advised that the collection used for leaderfeed is dedicated and set up by leaderfeed.
 
-##### LeaderFeed#MongoDB(`client:MongoClient` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
+##### LeaderFeed#MongoDB(`driver:MongoDB` `url:String` [,`opts:Object`]) => `MongoLeaderFeed`
 
 Initializes a new `MongoLeaderFeed`
 
-* `client` - mongodb MongoClient
+* `driver` - mongodb driver
 * `url` - database name
 * [`opts`] - extended mongodb connection options
   * [`createIfMissing=true`] - create the db and table if missing

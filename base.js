@@ -137,7 +137,7 @@ var LeaderFeed = function (_EventEmitter) {
    * @param options
    * @param DEFAULT_HEARTBEAT_INTERVAL
    */
-  function LeaderFeed(options, DEFAULT_HEARTBEAT_INTERVAL) {
+  function LeaderFeed(options, DEFAULT_HEARTBEAT_INTERVAL, ChangeFeed) {
     classCallCheck(this, LeaderFeed);
 
     var _this = possibleConstructorReturn(this, (LeaderFeed.__proto__ || Object.getPrototypeOf(LeaderFeed)).call(this));
@@ -148,6 +148,7 @@ var LeaderFeed = function (_EventEmitter) {
     _this.state = null;
     _this.started = false;
     _this.status = STOPPED;
+    _this.ChangeFeed = ChangeFeed;
 
     _this._options = options || {};
     _this._electionTimeout = null;
@@ -180,16 +181,15 @@ var LeaderFeed = function (_EventEmitter) {
   }
 
   /**
-   * starts the leaderfeed and subscription
+   * creates a new changefeed
    * @param options
    * @param callback
-   * @returns {Promise}
    */
 
 
   createClass(LeaderFeed, [{
-    key: 'start',
-    value: function start(options) {
+    key: 'changes',
+    value: function changes(collection) {
       var _this2 = this;
 
       var callback = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : function () {
@@ -201,44 +201,76 @@ var LeaderFeed = function (_EventEmitter) {
       };
 
       return new Promise(function (resolve, reject) {
+        return new _this2.ChangeFeed(_this2, collection).changes(function (error, changefeed) {
+          if (error) {
+            callback(error);
+            return reject(error);
+          }
+          callback(null, changefeed);
+          return resolve(changefeed);
+        });
+      });
+    }
+
+    /**
+     * starts the leaderfeed and subscription
+     * @param options
+     * @param callback
+     * @returns {Promise}
+     */
+
+  }, {
+    key: 'start',
+    value: function start(options) {
+      var _this3 = this;
+
+      var callback = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : function () {
+        return false;
+      };
+
+      callback = _.isFunction(callback) ? callback : function () {
+        return false;
+      };
+
+      return new Promise(function (resolve, reject) {
         var done = doneFactory(function (error) {
-          return error ? callback(error) : callback(null, _this2);
+          return error ? callback(error) : callback(null, _this3);
         }, function () {
-          return resolve(_this2);
+          return resolve(_this3);
         }, reject);
 
-        if (_this2.status === STARTING) return done(new Error('leaderfeed is currently starting'));
-        if (_this2.status === STARTED) return done(new Error('leaderfeed already started'));
+        if (_this3.status === STARTING) return done(new Error('leaderfeed is currently starting'));
+        if (_this3.status === STARTED) return done(new Error('leaderfeed already started'));
         if (!_.isObject(options) || _.isEmpty(options)) return done(new Error('invalid options'));
-        _this2.status = STARTING;
+        _this3.status = STARTING;
 
         // start the heartbeat listener
-        _this2.on(HEARTBEAT, function (leader) {
-          if (leader !== _this2.id) debug('heartbeat from %s', leader);
+        _this3.on(HEARTBEAT, function (leader) {
+          if (leader !== _this3.id) debug('heartbeat from %s', leader);
 
           // check if a new leader has been elected
-          if (_this2.leader && _this2.leader !== leader) _this2.emit(NEW_LEADER, leader);
-          _this2.leader = leader;
+          if (_this3.leader && _this3.leader !== leader) _this3.emit(NEW_LEADER, leader);
+          _this3.leader = leader;
 
           // if leader, do not time out self, otherwise restart the timeout
-          _this2.leader === _this2.id ? _this2._clearElectionTimeout() : _this2._restartElectionTimeout();
+          _this3.leader === _this3.id ? _this3._clearElectionTimeout() : _this3._restartElectionTimeout();
 
           // if the the node thinks it is the leader but the heartbeat
           // says otherwise, change to follower
-          if (_this2.state === LEADER && leader !== _this2.id) return _this2._changeState(FOLLOWER);
+          if (_this3.state === LEADER && leader !== _this3.id) return _this3._changeState(FOLLOWER);
         }).on(SUB_ERROR, function (error) {
           debug('%s %O', SUB_ERROR, error);
-          return _this2._changeState(FOLLOWER);
+          return _this3._changeState(FOLLOWER);
         }).on(SUB_STARTED, function () {
-          _this2.status = STARTED;
-          return _this2._changeState(FOLLOWER);
+          _this3.status = STARTED;
+          return _this3._changeState(FOLLOWER);
         }).on(HEARTBEAT_ERROR, function (error) {
           debug('%s %O', HEARTBEAT_ERROR, error);
-          return _this2._changeState(FOLLOWER);
+          return _this3._changeState(FOLLOWER);
         });
 
         // if create successful, attempt to start
-        return _this2._start(options, function (error) {
+        return _this3._start(options, function (error) {
           if (error) {
             debug('error during start %O', error);
             return done(error);
@@ -247,7 +279,7 @@ var LeaderFeed = function (_EventEmitter) {
           debug('_start successful');
 
           // attempt to create
-          return _this2.create(function (error) {
+          return _this3.create(function (error) {
             if (error) {
               debug('error during create %O', error);
               return done(error);
@@ -257,7 +289,7 @@ var LeaderFeed = function (_EventEmitter) {
 
             // if start and create are successful, attempt to subscribe
             debug('starting feed');
-            return _this2.subscribe(done);
+            return _this3.subscribe(done);
           });
         });
       });
@@ -272,12 +304,12 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'stop',
     value: function stop(callback) {
-      var _this3 = this;
+      var _this4 = this;
 
       return new Promise(function (resolve, reject) {
         var done = doneFactory(callback, resolve, reject);
 
-        switch (_this3.status) {
+        switch (_this4.status) {
           case STARTING:
             return done('leaderfeed cannot be stopped while starting');
           case STOPPED:
@@ -285,20 +317,20 @@ var LeaderFeed = function (_EventEmitter) {
           case STOPPING:
             return done('leaderfeed is currently stopping');
           default:
-            _this3.status = STOPPING;
+            _this4.status = STOPPING;
             break;
         }
 
-        _this3._clearHeartbeatInterval();
-        _this3._clearElectionTimeout();
-        _this3._unsubscribe(function (error) {
+        _this4._clearHeartbeatInterval();
+        _this4._clearElectionTimeout();
+        _this4._unsubscribe(function (error) {
           // on error restart the services
           if (error) {
-            _this3.state === LEADER ? _this3._restartHeartbeatInterval() : _this3._restartElectionTimeout();
-            _this3.status = STARTED;
+            _this4.state === LEADER ? _this4._restartHeartbeatInterval() : _this4._restartElectionTimeout();
+            _this4.status = STARTED;
             return done(error);
           }
-          _this3.status = STOPPED;
+          _this4.status = STOPPED;
           return done();
         });
       });
@@ -335,7 +367,7 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'elect',
     value: function elect(id, callback) {
-      var _this4 = this;
+      var _this5 = this;
 
       if (_.isFunction(id)) {
         callback = id;
@@ -345,7 +377,7 @@ var LeaderFeed = function (_EventEmitter) {
 
       return new Promise(function (resolve, reject) {
         var done = doneFactory(callback, resolve, reject);
-        return _this4._elect(id, done);
+        return _this5._elect(id, done);
       });
     }
 
@@ -358,19 +390,19 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: 'subscribe',
     value: function subscribe(done) {
-      var _this5 = this;
+      var _this6 = this;
 
       try {
         return this._subscribe(function (error) {
           if (error) {
             debug('error during subscribe %O', error);
-            _this5.emit();
+            _this6.emit();
             return done(error);
           }
 
           debug('subscribe successful');
-          _this5.emit(SUB_STARTED);
-          done(null, _this5);
+          _this6.emit(SUB_STARTED);
+          done(null, _this6);
         });
       } catch (error) {
         return done(error);
@@ -386,7 +418,7 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_changeState',
     value: function _changeState(state) {
-      var _this6 = this;
+      var _this7 = this;
 
       if (state === this.state) return false;
       debug('changed to state: %s', state);
@@ -402,10 +434,10 @@ var LeaderFeed = function (_EventEmitter) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
               debug('error sending heartbeat %O', error);
-              _this6._clearHeartbeatInterval();
-              return _this6._changeState(FOLLOWER);
+              _this7._clearHeartbeatInterval();
+              return _this7._changeState(FOLLOWER);
             }
-            _this6._restartHeartbeatInterval();
+            _this7._restartHeartbeatInterval();
           });
 
         case FOLLOWER:
@@ -435,15 +467,15 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartHeartbeatInterval',
     value: function _restartHeartbeatInterval() {
-      var _this7 = this;
+      var _this8 = this;
 
       this._clearHeartbeatInterval();
       this._heartbeatInterval = setInterval(function () {
-        return _this7._heartbeat(function (error) {
+        return _this8._heartbeat(function (error) {
           // if there was an error updating the heartbeat, cancel the interval
           if (error) {
-            _this7._clearHeartbeatInterval();
-            _this7.emit(HEARTBEAT_ERROR, error);
+            _this8._clearHeartbeatInterval();
+            _this8.emit(HEARTBEAT_ERROR, error);
           }
         });
       }, this._heartbeatIntervalMs);
@@ -469,11 +501,11 @@ var LeaderFeed = function (_EventEmitter) {
   }, {
     key: '_restartElectionTimeout',
     value: function _restartElectionTimeout() {
-      var _this8 = this;
+      var _this9 = this;
 
       this._clearElectionTimeout();
       this._electionTimeout = setTimeout(function () {
-        return _this8._changeState(LEADER);
+        return _this9._changeState(LEADER);
       }, this.randomElectionTimeout);
     }
 

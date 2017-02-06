@@ -1,4 +1,5 @@
 import _ from 'lodash'
+import ChangeFeed from './changefeed'
 import Debug from 'debug'
 import pad from '../common/pad'
 
@@ -34,10 +35,10 @@ export default class MongoLeaderFeed extends LeaderFeed {
       url = null
     }
 
-    super(options, DEFAULT_HEARTBEAT_INTERVAL)
+    super(options, DEFAULT_HEARTBEAT_INTERVAL, ChangeFeed)
 
     // check if the driver is a db or driver
-    this.db = _.isObject(driver) && !_.isFunction(driver.connect)
+    this.db = _.isObject(driver) && !_.isFunction(_.get(driver, 'MongoClient.connect'))
       ? driver
       : null
 
@@ -84,7 +85,7 @@ export default class MongoLeaderFeed extends LeaderFeed {
       if (this.db) return done()
 
       // otherwise connect it
-      return this._driver.connect(this._url, this._options, (error, db) => {
+      return this._driver.MongoClient.connect(this._url, this._options, (error, db) => {
         if (error) return done(error)
         this.db = db
         return done()

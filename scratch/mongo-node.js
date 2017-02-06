@@ -4,7 +4,7 @@ require('babel-register')
 var LeaderFeed = require('../src/index').default.MongoDB
 var mongodb = require('mongodb')
 
-let feed = new LeaderFeed(mongodb.MongoClient, 'mongodb://localhost:27017/test')
+let feed = new LeaderFeed(mongodb, 'mongodb://localhost:27017/test')
 
 feed.start({ collection: 'leaderfeed' })
   .then(function (node) {
