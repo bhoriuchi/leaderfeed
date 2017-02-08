@@ -148,6 +148,7 @@ var LeaderFeed = function (_EventEmitter) {
     _this.state = null;
     _this.started = false;
     _this.status = STOPPED;
+    _this.leader = null;
     _this.ChangeFeed = ChangeFeed;
 
     _this._options = options || {};
@@ -422,12 +423,13 @@ var LeaderFeed = function (_EventEmitter) {
 
       if (state === this.state) return false;
       debug('changed to state: %s', state);
-      this.emit(NEW_STATE, state);
 
       switch (state) {
         case LEADER:
           this.state = LEADER;
+          this.leader = this.id;
           this._clearElectionTimeout();
+          this.emit(NEW_STATE, state);
 
           // send the first heartbeat and start the heartbeat interval
           return this._heartbeat(function (error) {
@@ -442,7 +444,9 @@ var LeaderFeed = function (_EventEmitter) {
 
         case FOLLOWER:
           this.state = FOLLOWER;
+          this.leader = null;
           this._restartElectionTimeout();
+          this.emit(NEW_STATE, state);
           return Promise.resolve();
       }
     }

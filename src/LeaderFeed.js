@@ -34,6 +34,7 @@ export default class LeaderFeed extends EventEmitter {
     this.state = null
     this.started = false
     this.status = STOPPED
+    this.leader = null
     this.ChangeFeed = ChangeFeed
 
     this._options = options || {}
@@ -278,12 +279,13 @@ export default class LeaderFeed extends EventEmitter {
   _changeState (state) {
     if (state === this.state) return false
     debug('changed to state: %s', state)
-    this.emit(NEW_STATE, state)
 
     switch (state) {
       case LEADER:
         this.state = LEADER
+        this.leader = this.id
         this._clearElectionTimeout()
+        this.emit(NEW_STATE, state)
 
         // send the first heartbeat and start the heartbeat interval
         return this._heartbeat((error) => {
@@ -298,7 +300,9 @@ export default class LeaderFeed extends EventEmitter {
 
       case FOLLOWER:
         this.state = FOLLOWER
+        this.leader = null
         this._restartElectionTimeout()
+        this.emit(NEW_STATE, state)
         return Promise.resolve()
     }
   }
