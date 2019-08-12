@@ -130,7 +130,10 @@ export default class LeaderFeed extends EventEmitter {
 
         // if the the node thinks it is the leader but the heartbeat
         // says otherwise, change to follower
-        if (this.state === LEADER && leader !== this.id) return this._changeState(FOLLOWER)
+        if (this.state === LEADER && leader !== this.id) {
+          this._clearHeartbeatInterval();
+          return this._changeState(FOLLOWER)
+        }
       })
         .on(SUB_ERROR, error => {
           debug('%s %O', SUB_ERROR, error)
