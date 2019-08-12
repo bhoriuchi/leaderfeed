@@ -269,10 +269,10 @@ var MongoChangeFeed = function (_ChangeFeed) {
 
       try {
         // if the db is already connected we are done
-        if (this.db) return done
+        if (this.db) return done();
 
         // otherwise connect it
-        ();return this._driver.connect(this._url, this._options, function (error, db) {
+        return this._driver.connect(this._url, this._options, function (error, db) {
           if (error) return done(error);
           _this3.db = db;
           return done();
@@ -309,10 +309,10 @@ var MongoChangeFeed = function (_ChangeFeed) {
 
       try {
         return this.db.listCollections({ name: logCollection }).toArray(function (error, collections) {
-          if (error) return done(error
+          if (error) return done(error);
 
           // if the collection exists, get it and return done
-          );if (collections.length) {
+          if (collections.length) {
             return _this5.db.collection(logCollection, function (error, collection) {
               if (error) return done(error);
               return done(null, collection);
@@ -360,10 +360,10 @@ var MongoChangeFeed = function (_ChangeFeed) {
           }
 
           try {
-            var name = _.get(data, 'collection').trim
+            var name = _.get(data, 'collection').trim();
 
             // filter old records
-            ();if (name !== _this6._collection) return true;
+            if (name !== _this6._collection) return true;
 
             var type = _.get(data, TYPE, '').trim();
             var value = _.get(data, VALUE).trim();
@@ -589,18 +589,21 @@ var LeaderFeed = function (_EventEmitter) {
 
         // start the heartbeat listener
         _this3.on(HEARTBEAT, function (leader) {
-          if (leader !== _this3.id) debug$2('heartbeat from %s', leader
+          if (leader !== _this3.id) debug$2('heartbeat from %s', leader);
 
           // check if a new leader has been elected
-          );if (_this3.leader && _this3.leader !== leader) _this3.emit(NEW_LEADER, leader);
+          if (_this3.leader && _this3.leader !== leader) _this3.emit(NEW_LEADER, leader);
           _this3.leader = leader;
 
           // if leader, do not time out self, otherwise restart the timeout
-          _this3.leader === _this3.id ? _this3._clearElectionTimeout() : _this3._restartElectionTimeout
+          _this3.leader === _this3.id ? _this3._clearElectionTimeout() : _this3._restartElectionTimeout();
 
           // if the the node thinks it is the leader but the heartbeat
           // says otherwise, change to follower
-          ();if (_this3.state === LEADER && leader !== _this3.id) return _this3._changeState(FOLLOWER);
+          if (_this3.state === LEADER && leader !== _this3.id) {
+            _this3._clearHeartbeatInterval();
+            return _this3._changeState(FOLLOWER);
+          }
         }).on(SUB_ERROR, function (error) {
           debug$2('%s %O', SUB_ERROR, error);
           return _this3._changeState(FOLLOWER);
@@ -610,28 +613,28 @@ var LeaderFeed = function (_EventEmitter) {
         }).on(HEARTBEAT_ERROR, function (error) {
           debug$2('%s %O', HEARTBEAT_ERROR, error);
           return _this3._changeState(FOLLOWER);
-        }
+        });
 
         // if create successful, attempt to start
-        );return _this3._start(options, function (error) {
+        return _this3._start(options, function (error) {
           if (error) {
             debug$2('error during start %O', error);
             return done(error);
           }
 
-          debug$2('_start successful'
+          debug$2('_start successful');
 
           // attempt to create
-          );return _this3.create(function (error) {
+          return _this3.create(function (error) {
             if (error) {
               debug$2('error during create %O', error);
               return done(error);
             }
 
-            debug$2('create successful'
+            debug$2('create successful');
 
             // if start and create are successful, attempt to subscribe
-            );debug$2('starting feed');
+            debug$2('starting feed');
             return _this3.subscribe(done);
           });
         });
@@ -771,10 +774,10 @@ var LeaderFeed = function (_EventEmitter) {
           this.state = LEADER;
           this.leader = this.id;
           this._clearElectionTimeout();
-          this.emit(NEW_STATE, state
+          this.emit(NEW_STATE, state);
 
           // send the first heartbeat and start the heartbeat interval
-          );return this._heartbeat(function (error) {
+          return this._heartbeat(function (error) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
               debug$2('error sending heartbeat %O', error);
@@ -1048,10 +1051,10 @@ var MongoLeaderFeed = function (_LeaderFeed) {
         this._collectionName = collection;
 
         // if the db is already connected we are done
-        if (this.db) return done
+        if (this.db) return done();
 
         // otherwise connect it
-        ();return this._driver.MongoClient.connect(this._url, this._options, function (error, db) {
+        return this._driver.MongoClient.connect(this._url, this._options, function (error, db) {
           if (error) return done(error);
           _this2.db = db;
           return done();
@@ -1075,10 +1078,10 @@ var MongoLeaderFeed = function (_LeaderFeed) {
 
       try {
         return this.db.listCollections({ name: this._collectionName }).toArray(function (error, collections) {
-          if (error) return done(error
+          if (error) return done(error);
 
           // if the collection exists, get it and return done
-          );if (collections.length) {
+          if (collections.length) {
             return _this3.db.collection(_this3._collectionName, function (error, collection) {
               if (error) return done(error);
               _this3.collection = collection;
@@ -1588,10 +1591,10 @@ var RethinkLeaderFeed = function (_LeaderFeed) {
 
             var data = _.get(change, 'new_val');
             var id = _.get(data, ID$1);
-            var value = _.get(data, VALUE
+            var value = _.get(data, VALUE);
 
             // emit the appropriate event
-            );return id === LEADER ? _this5.emit(HEARTBEAT, value) : _this5.emit(CHANGE, change);
+            return id === LEADER ? _this5.emit(HEARTBEAT, value) : _this5.emit(CHANGE, change);
           });
 
           return done(null, _this5);

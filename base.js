@@ -247,18 +247,21 @@ var LeaderFeed = function (_EventEmitter) {
 
         // start the heartbeat listener
         _this3.on(HEARTBEAT, function (leader) {
-          if (leader !== _this3.id) debug('heartbeat from %s', leader
+          if (leader !== _this3.id) debug('heartbeat from %s', leader);
 
           // check if a new leader has been elected
-          );if (_this3.leader && _this3.leader !== leader) _this3.emit(NEW_LEADER, leader);
+          if (_this3.leader && _this3.leader !== leader) _this3.emit(NEW_LEADER, leader);
           _this3.leader = leader;
 
           // if leader, do not time out self, otherwise restart the timeout
-          _this3.leader === _this3.id ? _this3._clearElectionTimeout() : _this3._restartElectionTimeout
+          _this3.leader === _this3.id ? _this3._clearElectionTimeout() : _this3._restartElectionTimeout();
 
           // if the the node thinks it is the leader but the heartbeat
           // says otherwise, change to follower
-          ();if (_this3.state === LEADER && leader !== _this3.id) return _this3._changeState(FOLLOWER);
+          if (_this3.state === LEADER && leader !== _this3.id) {
+            _this3._clearHeartbeatInterval();
+            return _this3._changeState(FOLLOWER);
+          }
         }).on(SUB_ERROR, function (error) {
           debug('%s %O', SUB_ERROR, error);
           return _this3._changeState(FOLLOWER);
@@ -268,28 +271,28 @@ var LeaderFeed = function (_EventEmitter) {
         }).on(HEARTBEAT_ERROR, function (error) {
           debug('%s %O', HEARTBEAT_ERROR, error);
           return _this3._changeState(FOLLOWER);
-        }
+        });
 
         // if create successful, attempt to start
-        );return _this3._start(options, function (error) {
+        return _this3._start(options, function (error) {
           if (error) {
             debug('error during start %O', error);
             return done(error);
           }
 
-          debug('_start successful'
+          debug('_start successful');
 
           // attempt to create
-          );return _this3.create(function (error) {
+          return _this3.create(function (error) {
             if (error) {
               debug('error during create %O', error);
               return done(error);
             }
 
-            debug('create successful'
+            debug('create successful');
 
             // if start and create are successful, attempt to subscribe
-            );debug('starting feed');
+            debug('starting feed');
             return _this3.subscribe(done);
           });
         });
@@ -429,10 +432,10 @@ var LeaderFeed = function (_EventEmitter) {
           this.state = LEADER;
           this.leader = this.id;
           this._clearElectionTimeout();
-          this.emit(NEW_STATE, state
+          this.emit(NEW_STATE, state);
 
           // send the first heartbeat and start the heartbeat interval
-          );return this._heartbeat(function (error) {
+          return this._heartbeat(function (error) {
             if (error) {
               // if unable to set the heartbeat, cleat the interval and become follower
               debug('error sending heartbeat %O', error);
