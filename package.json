@@ -50,7 +50,7 @@
     "babel-preset-stage-2": "^6.22.0",
     "babel-register": "^6.22.0",
     "babel-runtime": "^6.22.0",
-    "mongodb": "^2.2.22",
+    "mongodb": "^3.6.1",
     "redis": "^2.6.5",
     "rethinkdb": "^2.3.3",
     "rethinkdbdash": "^2.3.27",
